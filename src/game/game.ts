@@ -93,12 +93,14 @@ export class Game {
   private logTab: LogTab = 'quests';
   private titleAngle = 0;
   private hello = true;
+  /** Simulation steps per rendered frame (1 in play; tests raise it). */
+  substeps = 1;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     container.appendChild(this.renderer.domElement);
     this.input = new Input(this.renderer.domElement);
     this.bean.group.scale.setScalar(BEAN_SCALE);
@@ -450,17 +452,20 @@ export class Game {
     this.time += dt;
     this.input.poll();
     if (this.input.anyKeyPressed) unlockAudio();
-    this.step(dt);
-    this.input.endFrame();
+    // tests may run the simulation faster than real time (several steps per rendered frame)
+    for (let k = 0; k < this.substeps; k++) {
+      this.step(dt, k === this.substeps - 1);
+      this.input.endFrame();
+    }
   }
 
-  step(dt: number): void {
+  step(dt: number, render = true): void {
     const i = this.input;
     if (this.mode === 'title') {
       this.menuInput();
       this.titleCamera(dt);
       this.space.update(dt, this.time, this.camera);
-      this.renderer.render(this.space.scene, this.camera);
+      if (render) this.renderer.render(this.space.scene, this.camera);
       return;
     }
     if (i.pressed('voice')) this.toggleVoice();
@@ -498,7 +503,7 @@ export class Game {
         sfx.geyser();
       }
     } else this.space.update(dt, this.time, this.camera);
-    this.renderer.render(scene, this.camera);
+    if (render) this.renderer.render(scene, this.camera);
   }
 
   private titleCamera(dt: number): void {
@@ -820,7 +825,9 @@ export class Game {
     setHum(0, false);
     s.right(_v);
     const p = this.player;
-    p.pos.copy(s.pos).addScaledVector(_v, 4);
+    // step out beside the wing, a little behind the cockpit
+    p.pos.copy(s.pos).addScaledVector(_v, 5.5).addScaledVector(s.forward(_v2), -1.5);
+    surf.collide(p.pos, 0.6, 1.6);
     p.pos.y = surf.groundAt(p.pos.x, p.pos.z, p.pos.y + 2);
     p.vy = 0;
     p.vx = p.vz = 0;
@@ -833,6 +840,7 @@ export class Game {
     this.footYaw = Math.atan2(_v.x, _v.z);
     this.bean.targetYaw = this.bean.yaw = this.footYaw;
     this.footPitch = 0.35;
+    this.camera.position.set(p.pos.x - Math.sin(this.footYaw) * 7, p.pos.y + 4.5, p.pos.z - Math.cos(this.footYaw) * 7);
     if (withEffects) {
       sfx.land();
       for (let k = 0; k < 30; k++) {
@@ -1274,10 +1282,12 @@ export class Game {
       let alt: number | null = null;
       let tgt = `🎯 ${t(target.id)}`;
       if (this.mode === 'space') {
+        const camUp = _v3.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
         for (const p of PLANETS) {
           const d = ship.pos.distanceTo(p.pos) - p.radius;
           markers.push({
-            pos: p.pos,
+            // above the planet's disc rather than on top of it
+            pos: p.pos.clone().addScaledVector(camUp, p.radius * 1.3),
             label: t(p.id),
             sub: p.locked && !s.hyperdrive ? `🔒 ${(d / 1000).toFixed(1)} km` : `${(d / 1000).toFixed(1)} km`,
             color: css(p.atmosphere),
@@ -1409,10 +1419,17 @@ export class Game {
         return true;
       },
       speciesHere: () => this.surface?.speciesHere().filter((x) => SPECIES.find((y) => y.id === x)?.kind === 'creature') ?? [],
+      visit: (id: PlanetId) => {
+        this.state.land = [0, 0];
+        this.enterSurface(id, 'landed');
+      },
       setTarget: (id: PlanetId) => {
         this.state.target = id;
       },
       charHeight: CHAR_HEIGHT * BEAN_SCALE,
+      setSpeed: (n: number) => {
+        this.substeps = Math.max(1, Math.round(n));
+      },
     };
   }
 }

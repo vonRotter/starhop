@@ -191,5 +191,6 @@ export class Ship {
       f.visible = !this.landed;
     }
     for (const l of this.model.legs) l.visible = this.landed;
+    for (const g of this.model.glows) g.visible = !this.landed;
   }
 }

@@ -140,6 +140,8 @@ export interface ShipModel {
   /** Banks and leans (visual only). */
   body: THREE.Group;
   flames: THREE.Mesh[];
+  /** Engine glows and halos, dimmed when the engines are off. */
+  glows: THREE.Object3D[];
   legs: THREE.Group[];
   cameraOffset: THREE.Vector3;
 }
@@ -186,6 +188,7 @@ export function makeShipModel(): ShipModel {
   body.add(fin);
   // engines and flames
   const flames: THREE.Mesh[] = [];
+  const glows: THREE.Object3D[] = [];
   const flameGeo = sharedGeo('shipFlame', () => new THREE.ConeGeometry(0.42, 1, 12, 1, true).translate(0, -0.5, 0).rotateX(-Math.PI / 2));
   for (const side of [-1, 1]) {
     const pod = mesh(sharedGeo('pod', () => new THREE.CylinderGeometry(0.5, 0.42, 1.6, 14).rotateX(Math.PI / 2)), dark, side * 0.85, -0.25, 2.1);
@@ -196,6 +199,7 @@ export function makeShipModel(): ShipModel {
     halo.scale.setScalar(1.8);
     halo.position.set(side * 0.85, -0.25, 3.05);
     flames.push(flame);
+    glows.push(glow, halo);
     body.add(pod, glow, flame, halo);
   }
   // landing legs (shown when landed)
@@ -214,7 +218,7 @@ export function makeShipModel(): ShipModel {
     legs.push(leg);
     body.add(leg);
   }
-  return { group, body, flames, legs, cameraOffset: new THREE.Vector3(0, 3.4, 12.5) };
+  return { group, body, flames, glows, legs, cameraOffset: new THREE.Vector3(0, 3.4, 12.5) };
 }
 
 // ---------------------------------------------------------------------------------------------
