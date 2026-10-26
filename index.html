@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starhop</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 L20 12 L30 12 L22 19 L25 30 L16 23 L7 30 L10 19 L2 12 L12 12 Z' fill='%23ffc93c'/%3E%3C/svg%3E"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="game"></div>
+    <div id="hud">
+      <div id="markers"></div>
+      <div id="scanring">
+        <svg viewBox="0 0 100 100"><circle class="bg" cx="50" cy="50" r="40" /><circle class="fg" cx="50" cy="50" r="40" /></svg>
+        <div class="name"></div>
+      </div>
+      <div id="inv"></div>
+      <div id="tracker"></div>
+      <div id="flight">
+        <div class="row"><span class="k" id="fl-speed-l"></span><div class="bar"><i id="fl-speed"></i></div></div>
+        <div class="row"><span class="k" id="fl-boost-l"></span><div class="bar boost"><i id="fl-boost"></i></div></div>
+        <div class="row" id="fl-alt-row"><span class="k" id="fl-alt-l"></span><b id="fl-alt"></b></div>
+        <div id="fl-target"></div>
+        <div id="fl-auto"></div>
+      </div>
+      <div id="jet"><div class="bar"><i id="jet-fuel"></i></div></div>
+      <div id="prompt"></div>
+      <div id="toast"></div>
+      <div id="controls"></div>
+      <div id="reticle"></div>
+    </div>
+
+    <div id="fade"><p id="fade-text"></p></div>
+
+    <div id="dialog" class="overlay">
+      <div class="panel dialog">
+        <div class="portrait"><div class="face"></div></div>
+        <div class="body">
+          <div class="who" id="dlg-who"></div>
+          <p id="dlg-text"></p>
+          <div id="dlg-extra"></div>
+          <div class="choice" id="dlg-buttons"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="title" class="overlay visible">
+      <div class="panel title">
+        <h1>STAR<span>HOP</span></h1>
+        <p class="tag" id="t-tag"></p>
+        <div class="menu vertical">
+          <button id="t-continue" class="primary"></button>
+          <button id="t-new"></button>
+          <div class="row">
+            <button id="t-en" class="small">English</button>
+            <button id="t-no" class="small">Norsk</button>
+          </div>
+          <button id="t-voice" class="small"></button>
+        </div>
+        <div id="t-confirm" class="confirm">
+          <p id="t-confirm-text"></p>
+          <div class="row">
+            <button id="t-yes"></button>
+            <button id="t-cancel" class="primary"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay">
+      <div class="panel small">
+        <h2 id="p-title"></h2>
+        <div class="menu vertical">
+          <button id="p-resume" class="primary"></button>
+          <button id="p-log"></button>
+          <div class="row">
+            <button id="p-en" class="small">English</button>
+            <button id="p-no" class="small">Norsk</button>
+          </div>
+          <button id="p-voice" class="small"></button>
+          <button id="p-quit"></button>
+        </div>
+      </div>
+    </div>
+
+    <div id="log" class="overlay">
+      <div class="panel wide">
+        <div class="tabs">
+          <button data-tab="quests"></button>
+          <button data-tab="finds"></button>
+          <button data-tab="gear"></button>
+        </div>
+        <div id="log-body"></div>
+        <div class="menu"><button id="log-close" class="primary"></button></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
