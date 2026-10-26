@@ -1136,6 +1136,7 @@ export class Game {
       const inRange = d <= range;
       let name = known ? `✓ ${t(target.species)}` : '?';
       if (!known && !inRange) name = t('tooFar');
+      surf.holdStill = scanHeld && !known && inRange ? target : null;
       if (scanHeld && !known && inRange) {
         this.scanProgress += dt / (s.scanner2 ? 0.8 : 1.6);
         this.scanTick -= dt;
@@ -1163,7 +1164,10 @@ export class Game {
       } else this.scanProgress = Math.max(0, this.scanProgress - dt);
       if (!prompt && !known && inRange) prompt = `${keyCap('F', 'RT', this.input.device)}${t('pScan')}`;
       this.hud.scanRing(this.camera, tp, known ? 1 : this.scanProgress, name, known);
-    } else this.hud.scanRing(this.camera, null);
+    } else {
+      this.hud.scanRing(this.camera, null);
+      surf.holdStill = null;
+    }
     this.hud.prompt(prompt);
   }
 

@@ -174,8 +174,9 @@ export class Hud {
         const s = 0.44 / Math.max(Math.abs(dx), Math.abs(dy) * (w / h) * (h / w) * 1.0, 1e-4);
         dx *= s;
         dy *= s;
-        x = 0.5 + Math.max(-0.46, Math.min(0.46, dx));
-        y = 0.5 + Math.max(-0.42, Math.min(0.42, dy));
+        // keep clear of the panels at the top and bottom of the screen
+        x = 0.5 + Math.max(-0.45, Math.min(0.45, dx));
+        y = 0.5 + Math.max(-0.36, Math.min(0.24, dy));
       }
       el.className = `marker${m.target ? ' target' : ''}${off ? ' edge' : ''}`;
       el.style.left = `${x * w}px`;

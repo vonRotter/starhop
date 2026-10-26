@@ -106,6 +106,8 @@ export class Surface {
   readonly sunDir = new THREE.Vector3(0.45, 0.8, 0.35).normalize();
   probe: { group: THREE.Group; light: THREE.Mesh; taken: boolean } | null = null;
   pip: Bean | null = null;
+  /** The creature being scanned holds still (set by the game each frame). */
+  holdStill: Scannable | null = null;
   readonly pipPos = new THREE.Vector3(9, 0, 5);
   private readonly noise: Noise2D;
   private readonly noise2: Noise2D;
@@ -629,6 +631,11 @@ export class Surface {
         continue;
       }
       const o = c.obj.position;
+      if (c === this.holdStill) {
+        c.moving = Math.max(0, c.moving - dt * 4);
+        c.model.animate(time + c.phase, c.moving);
+        continue;
+      }
       const dxp = o.x - player.x;
       const dzp = o.z - player.z;
       const dp = Math.hypot(dxp, dzp);

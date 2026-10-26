@@ -56,5 +56,12 @@ npm run build      # type-check and production build in dist/
 npm test           # scripted Playwright play-through (needs a build and Chromium)
 ```
 
+The play-through (`tests/playthrough.mjs`) runs against `npx vite preview --port 4173`: new game
+with a Couch profile, quest 1 (scan, gather, autopilot to Bloom and back, land, hand in),
+reload and Continue, quest log, Norwegian, a fake gamepad, and with `FULL=1` also quests 2 and 3
+(jetpack, hyperjump, the probe). It fails on any console error or warning. `tests/planets.mjs`
+takes screenshots of every planet. Set `CHROME` to the Chromium binary if it is not at
+`/opt/pw-browsers/...`.
+
 Built with three.js and TypeScript (Vite). All code and models were written by Claude
 (Anthropic's AI) from plain-language direction.
