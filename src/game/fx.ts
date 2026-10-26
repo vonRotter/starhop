@@ -24,7 +24,7 @@ const frag = /* glsl */ `
   varying vec3 vColor;
   void main() {
     vec4 t = texture2D(uMap, gl_PointCoord);
-    gl_FragColor = vec4(vColor, t.a * vAlpha);
+    gl_FragColor = vec4(vColor, t.a * vAlpha * 0.8);
   }
 `;
 
@@ -111,7 +111,7 @@ export class Particles {
       this.pos[i * 3 + 1] += q.vy * dt;
       this.pos[i * 3 + 2] += q.vz * dt;
       const t = Math.max(0, q.life / q.max);
-      this.alpha[i] = Math.min(1, t * 2);
+      this.alpha[i] = Math.min(1, t * 1.6);
       this.size[i] = q.size * (1 + q.grow * (1 - t));
     }
     const g = this.points.geometry;

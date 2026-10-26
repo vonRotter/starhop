@@ -740,9 +740,9 @@ export class Game {
     }
     s.updateVisuals(dt, this.time);
     // dust under a low ship
-    if (s.pos.y - g < 12 && Math.random() < dt * 30) {
+    if (s.pos.y - g < 12 && Math.random() < dt * 14) {
       _v.set(s.pos.x + rand(-2, 2), g + 0.3, s.pos.z + rand(-2, 2));
-      surf.fx.emit(_v, _v2.set(rand(-4, 4), rand(0.5, 2), rand(-4, 4)), this.surface!.def.ground[1], 3, 1.2, { grow: 2, drag: 1 });
+      surf.fx.emit(_v, _v2.set(rand(-4, 4), rand(0.5, 2), rand(-4, 4)), this.surface!.def.ground[2], 1.8, 1.0, { grow: 1.5, drag: 1 });
     }
     setHum(this.autoLand?.phase === 'down' ? 0.35 : 0.3 + s.thrust * 0.6, s.boosting);
     this.chaseCamera(dt);
@@ -843,10 +843,10 @@ export class Game {
     this.camera.position.set(p.pos.x - Math.sin(this.footYaw) * 7, p.pos.y + 4.5, p.pos.z - Math.cos(this.footYaw) * 7);
     if (withEffects) {
       sfx.land();
-      for (let k = 0; k < 30; k++) {
-        const a = (k / 30) * Math.PI * 2;
+      for (let k = 0; k < 18; k++) {
+        const a = (k / 18) * Math.PI * 2;
         _v.set(s.pos.x + Math.cos(a) * 2, s.pos.y - LAND_H + 0.3, s.pos.z + Math.sin(a) * 2);
-        surf.fx.emit(_v, _v2.set(Math.cos(a) * 8, 1, Math.sin(a) * 8), surf.def.ground[1], 3.5, 1.4, { grow: 2, drag: 1.5 });
+        surf.fx.emit(_v, _v2.set(Math.cos(a) * 8, 1, Math.sin(a) * 8), surf.def.ground[2], 2, 1.0, { grow: 1.5, drag: 1.5 });
       }
       this.hud.toast(t(surf.def.id), 2.5);
     }
@@ -868,7 +868,7 @@ export class Game {
     for (let k = 0; k < 20; k++) {
       const a = (k / 20) * Math.PI * 2;
       _v.set(this.ship.pos.x, this.ship.pos.y - LAND_H + 0.3, this.ship.pos.z);
-      surf.fx.emit(_v, _v2.set(Math.cos(a) * 9, 1, Math.sin(a) * 9), surf.def.ground[1], 3.5, 1.2, { grow: 2, drag: 1.5 });
+      surf.fx.emit(_v, _v2.set(Math.cos(a) * 9, 1, Math.sin(a) * 9), surf.def.ground[2], 2, 1.0, { grow: 1.5, drag: 1.5 });
     }
   }
 
@@ -962,7 +962,7 @@ export class Game {
     const s = this.state;
     const f = this.input.readFoot(dt);
     this.footYaw -= f.lookX;
-    this.footPitch = clamp(this.footPitch + f.lookY, -0.25, 1.2);
+    this.footPitch = clamp(this.footPitch + f.lookY, -0.25, 1.0);
     // move relative to the camera
     const fx = Math.sin(this.footYaw);
     const fz = Math.cos(this.footYaw);
@@ -1389,7 +1389,7 @@ export class Game {
         hyperdrive: this.state.hyperdrive,
       }),
       /** Puts the astronaut next to a thing of the given kind, facing it. */
-      goNear: (what: string) => {
+      goNear: (what: string, high = false) => {
         const surf = this.surface;
         if (!surf || this.mode !== 'foot') return false;
         let pos: THREE.Vector3 | null = null;
@@ -1404,7 +1404,7 @@ export class Game {
           pos = c ? c.obj.position.clone() : null;
           dist = 5;
         } else {
-          const n = surf.resources.find((r) => !r.done && r.kind === (what as ResourceId) && r.group.position.y - surf.height(r.group.position.x, r.group.position.z) < 1);
+          const n = surf.resources.find((r) => !r.done && r.kind === (what as ResourceId) && (r.group.position.y - surf.height(r.group.position.x, r.group.position.z) < 1) !== high);
           pos = n ? n.group.position : null;
           dist = 1.8;
         }
@@ -1422,6 +1422,19 @@ export class Game {
       visit: (id: PlanetId) => {
         this.state.land = [0, 0];
         this.enterSurface(id, 'landed');
+      },
+      /** The nearest ice pillar with ice on top: position and top height. */
+      pillar: () => {
+        const surf = this.surface;
+        const n = surf?.resources.find((r) => !r.done && r.group.position.y - surf.height(r.group.position.x, r.group.position.z) > 3);
+        if (!surf || !n) return null;
+        const c = surf.colliders.find((c) => Math.hypot(c.x - n.group.position.x, c.z - n.group.position.z) < 0.5)!;
+        // stand beside it, facing it
+        const a = Math.atan2(this.player.pos.z - c.z, this.player.pos.x - c.x);
+        this.player.pos.set(c.x + Math.cos(a) * (c.r + 1.2), 0, c.z + Math.sin(a) * (c.r + 1.2));
+        this.player.pos.y = surf.groundAt(this.player.pos.x, this.player.pos.z, this.player.pos.y + 1);
+        this.footYaw = Math.atan2(c.x - this.player.pos.x, c.z - this.player.pos.z);
+        return { top: c.top, y: this.player.pos.y };
       },
       setTarget: (id: PlanetId) => {
         this.state.target = id;

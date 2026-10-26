@@ -229,7 +229,7 @@ export class Surface {
       const t = clamp((h + this.def.hillAmp) / (this.def.hillAmp * 2.2), 0, 1);
       c.copy(cLow).lerp(cMid, smooth(0.2, 0.5, t)).lerp(cHigh, smooth(0.55, 0.9, t));
       const patch = this.noise2.noise(x * 0.06, z * 0.06);
-      if (patch > 0.45 && slope < 0.2) c.lerp(cAcc, 0.55);
+      if (patch > 0.45 && slope < 0.2) c.lerp(cAcc, this.def.id === 'dune' ? 0.35 : 0.55);
       if (slope > 0.28 || h > 34) c.lerp(cRock, smooth(0.28, 0.5, slope) * 0.8 + (h > 34 ? 0.3 : 0));
       colors.set([c.r, c.g, c.b], i * 3);
     }

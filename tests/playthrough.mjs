@@ -13,6 +13,13 @@ const browser = await chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
 });
 const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+// a fake gamepad the test can drive (standard mapping)
+await page.addInitScript(() => {
+  const pad = { id: 'test pad', index: 0, connected: true, mapping: 'standard', timestamp: 0, axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, () => ({ pressed: false, touched: false, value: 0 })) };
+  window.__pad = pad;
+  window.__padOn = false;
+  navigator.getGamepads = () => (window.__padOn ? [pad] : []);
+});
 const errors = [];
 page.on('console', (m) => {
   if (m.type() === 'error' || m.type() === 'warning') errors.push(`${m.type()}: ${m.text()}`);
@@ -153,6 +160,7 @@ try {
   i = await waitFor((i) => i.mode === 'foot', 'continue');
   if (i.quest !== 1 || !i.jetpack || i.where !== 'pebble' || i.finds.length < 4) throw new Error(`save not restored: ${JSON.stringify(i)}`);
   await snap('continued');
+  await sh('setSpeed', 3);
   const otherProfile = await page.evaluate(() => Object.keys(localStorage));
   console.log('  storage keys', otherProfile.join(', '));
 
@@ -169,6 +177,95 @@ try {
   await page.click('#p-resume');
   await page.waitForTimeout(500);
   await snap('norsk');
+
+  step('gamepad: walk with the left stick, board with X');
+  await page.evaluate(() => { window.__padOn = true; window.__pad.axes[1] = -1; });
+  const p0 = (await info()).pos;
+  await page.waitForTimeout(1200);
+  await page.evaluate(() => { window.__pad.axes[1] = 0; });
+  const p1 = (await info()).pos;
+  if (Math.hypot(p1[0] - p0[0], p1[2] - p0[2]) < 2) throw new Error(`pad did not move the astronaut ${p0} -> ${p1}`);
+  await snap('pad-controls');
+  await sh('goNear', 'ship');
+  await page.evaluate(() => { window.__pad.buttons[2].pressed = true; });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { window.__pad.buttons[2].pressed = false; });
+  await waitFor((i) => i.mode === 'air', 'board with pad X');
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { window.__pad.axes[3] = 0.8; window.__pad.buttons[0].pressed = true; });
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => { window.__pad.axes[3] = 0; window.__pad.buttons[0].pressed = false; });
+  await snap('pad-flight');
+  await page.evaluate(() => { window.__padOn = false; });
+
+  if (process.env.FULL) {
+    step('quest 2: autopilot to Frost, gather ice (some on pillars with the jetpack)');
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.where === 'frost' && i.mode === 'foot', 'land on Frost', 400000);
+    await snap('frost-landed');
+    await gather('ice', 3);
+    for (let k = 0; k < 2; k++) {
+      const pil = await sh('pillar');
+      await page.waitForTimeout(200);
+      await page.keyboard.down('KeyW');
+      await page.keyboard.down('Space');
+      await page.waitForTimeout(2500);
+      await page.keyboard.up('Space');
+      await page.waitForTimeout(600);
+      await page.keyboard.up('KeyW');
+      await page.waitForTimeout(400);
+      const i2 = await info();
+      console.log(`  pillar top ${pil.top.toFixed(1)}, astronaut y ${i2.pos[1]}`);
+      if (k === 0) await snap('frost-pillar');
+      if (i2.pos[1] < pil.top - 1) throw new Error('jetpack did not reach the pillar top');
+      const before = i2.inv.ice;
+      await sh('goNear', 'ice', true);
+      await hold('KeyE', 1200);
+      if ((await info()).inv.ice <= before) throw new Error('could not collect ice on the pillar');
+    }
+    await waitFor((i) => i.ready, 'quest 2 ready', 5000);
+    await sh('goNear', 'ship');
+    await page.keyboard.press('KeyE');
+    await waitFor((i) => i.mode === 'air', 'take off from Frost');
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.where === 'pebble' && i.mode === 'foot', 'back on Pebble', 400000);
+    await talkAndClick();
+    await page.waitForSelector('#dialog.visible', { timeout: 5000 });
+    await page.click('#dlg-buttons button.primary');
+    i = await info();
+    if (i.quest !== 2 || !i.hyperdrive || i.target !== 'dune') throw new Error(`quest 2 not completed: ${JSON.stringify(i)}`);
+
+    step('quest 3: hyperjump to Dune, find the probe');
+    await sh('goNear', 'ship');
+    await page.keyboard.press('KeyE');
+    await waitFor((i) => i.mode === 'air', 'take off');
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.mode === 'space' && !i.fading, 'space', 200000);
+    await page.keyboard.press('KeyH');
+    await page.waitForTimeout(600);
+    await snap('hyperjump');
+    await waitFor((i) => i.mode === 'space' && !i.fading && Math.hypot(i.pos[0] - 6200, i.pos[2] - 5600) < 1500, 'arrive at Dune', 60000);
+    await snap('dune-space');
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.where === 'dune' && i.mode === 'foot', 'land on Dune', 400000);
+    await sh('goNear', 'probe');
+    await snap('probe');
+    await page.keyboard.press('KeyE');
+    await waitFor((i) => i.ready, 'probe found', 5000);
+    await sh('goNear', 'ship');
+    await page.keyboard.press('KeyE');
+    await waitFor((i) => i.mode === 'air', 'take off from Dune');
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.mode === 'space' && !i.fading, 'space', 200000);
+    await page.keyboard.press('KeyH');
+    await waitFor((i) => i.mode === 'space' && !i.fading && Math.hypot(i.pos[0] - 2400, i.pos[2] - 600) < 1000, 'jump home', 60000);
+    await page.keyboard.press('KeyZ');
+    await waitFor((i) => i.where === 'pebble' && i.mode === 'foot', 'land home', 400000);
+    await talkAndClick();
+    i = await info();
+    if (i.quest !== 3) throw new Error(`quest 3 not completed: ${JSON.stringify(i)}`);
+    await snap('all-done');
+  }
 } catch (e) {
   await snap('failure');
   console.error('FAILED:', e.message);
