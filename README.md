@@ -10,6 +10,11 @@ the flight feel of [Tachyon](https://github.com/vonRotter/tachyon) and the look 
 Live build: **https://vonrotter.github.io/starhop/** (GitHub Actions deploys `dist` on every push
 to `main`; Pages must use **Settings → Pages → Source: GitHub Actions**).
 
+## Milestone 2 (in progress)
+
+A second NPC, more quests, crafting at a workbench, hazards, a ring race, a picture log, music
+and an options screen.
+
 ## The star system
 
 - **Pebble**: the lilac home world with Pip's outpost and the landing pad.
