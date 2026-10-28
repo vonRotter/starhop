@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { COLORS, basic, darken, faceted, glowTexture, mesh, sharedGeo, sphereGeo, toon } from '../core/palette';
 import type { SpeciesId } from './planets';
+import type { HatId } from './state';
 
 // ---------------------------------------------------------------------------------------------
 // The bean buddy from Couch Party Island, here as an astronaut with a glass helmet and a backpack.
@@ -23,8 +24,13 @@ export class Bean {
   targetYaw = 0;
   readonly jetFlames: THREE.Mesh[] = [];
   private prop: THREE.Group | null = null;
+  private hat: THREE.Group | null = null;
+  private hatId: HatId = 'none';
+  private readonly antenna: THREE.Object3D[] = [];
+  private readonly hatY: number;
 
-  constructor(color: number, opts: { helmet?: boolean; cap?: boolean } = {}) {
+  constructor(color: number, opts: { helmet?: boolean; cap?: boolean; hat?: HatId } = {}) {
+    this.hatY = opts.helmet ? 1.17 : CHAR_HEIGHT - 0.06;
     this.group.add(this.pivot);
     const bodyGeo = sharedGeo('beanBody', () => new THREE.CapsuleGeometry(BODY_R, BODY_LEN, 8, 18));
     const body = mesh(bodyGeo, toon(color), 0, CHAR_HEIGHT / 2, 0);
@@ -65,6 +71,7 @@ export class Bean {
       const pack = mesh(sharedGeo('pack', () => new THREE.BoxGeometry(0.5, 0.5, 0.26)), toon(COLORS.white), 0, 0.55, -0.42);
       const stripe = mesh(sharedGeo('packStripe', () => new THREE.BoxGeometry(0.52, 0.08, 0.27)), toon(COLORS.tangerine), 0, 0.62, -0.42);
       this.pivot.add(glass, rim, stalk, ball, pack, stripe);
+      this.antenna.push(stalk, ball);
       for (const s of [-1, 1]) {
         const nozzle = mesh(sharedGeo('nozzle', () => new THREE.CylinderGeometry(0.07, 0.09, 0.16, 10)), toon(0x8a86a0), s * 0.15, 0.27, -0.45);
         const flame = mesh(
@@ -89,6 +96,25 @@ export class Bean {
       this.prop = prop;
       this.pivot.add(cap, stem, prop);
     }
+    if (opts.hat) this.setHat(opts.hat);
+  }
+
+  /** Puts a hat on (Couch Party Island style); 'none' takes it off. */
+  setHat(id: HatId): void {
+    if (id === this.hatId && (this.hat || id === 'none')) return;
+    this.hatId = id;
+    if (this.hat) {
+      this.hat.removeFromParent();
+      this.hat = null;
+      this.prop = null;
+    }
+    for (const a of this.antenna) a.visible = id === 'none';
+    if (id === 'none') return;
+    const h = makeHat(id);
+    h.group.position.y = this.hatY;
+    this.hat = h.group;
+    if (h.prop) this.prop = h.prop;
+    this.pivot.add(h.group);
   }
 
   squash(amount: number): void {
@@ -132,6 +158,68 @@ export class Bean {
   }
 }
 
+/** Hats from Couch Party Island (party cone, flower, propeller cap, hard hat, crown). Base at y = 0. */
+export function makeHat(id: HatId): { group: THREE.Group; prop: THREE.Group | null } {
+  const g = new THREE.Group();
+  let prop: THREE.Group | null = null;
+  switch (id) {
+    case 'party': {
+      const cone = mesh(sharedGeo('hatCone', () => new THREE.ConeGeometry(0.22, 0.5, 16).translate(0, 0.25, 0)), toon(COLORS.candyPink));
+      const band = mesh(sharedGeo('hatConeBand', () => new THREE.TorusGeometry(0.2, 0.04, 6, 18)), toon(COLORS.candyYellow), 0, 0.05, 0);
+      band.rotation.x = Math.PI / 2;
+      const pom = mesh(sphereGeo(0.08), toon(COLORS.candyYellow), 0, 0.52, 0);
+      g.add(cone, band, pom);
+      g.rotation.z = 0.15;
+      break;
+    }
+    case 'flower': {
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const petal = mesh(sphereGeo(0.1, 10, 8), toon(i % 2 ? COLORS.white : COLORS.candyPink), Math.cos(a) * 0.14, 0.05, Math.sin(a) * 0.14);
+        petal.scale.set(1, 0.45, 1);
+        g.add(petal);
+      }
+      g.add(mesh(sphereGeo(0.08, 10, 8), toon(COLORS.candyYellow), 0, 0.08, 0));
+      g.position.x = 0.12;
+      break;
+    }
+    case 'propeller': {
+      const cap = mesh(sharedGeo('capDome', () => new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), toon(COLORS.sky), 0, -0.08, 0);
+      const stem = mesh(sharedGeo('propStem', () => new THREE.CylinderGeometry(0.025, 0.025, 0.14, 8)), toon(COLORS.ink), 0, 0.27, 0);
+      prop = new THREE.Group();
+      prop.position.y = 0.34;
+      for (const s of [-1, 1]) prop.add(mesh(sharedGeo('propBlade', () => new THREE.BoxGeometry(0.26, 0.02, 0.08)), toon(s > 0 ? COLORS.candyYellow : COLORS.coral), s * 0.13, 0, 0));
+      g.add(cap, stem, prop);
+      break;
+    }
+    case 'hardhat': {
+      const dome = mesh(sharedGeo('hardDome', () => new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), toon(COLORS.gold), 0, -0.05, 0);
+      const brim = mesh(sharedGeo('hardBrim', () => new THREE.CylinderGeometry(0.38, 0.38, 0.04, 20)), toon(COLORS.gold), 0, -0.04, 0.04);
+      const ridge = mesh(sharedGeo('hardRidge', () => new THREE.BoxGeometry(0.06, 0.06, 0.5)), toon(COLORS.tangerine), 0, 0.22, 0);
+      g.add(dome, brim, ridge);
+      break;
+    }
+    case 'crown': {
+      const gold = toon(COLORS.gold, { emissive: 0x403000 });
+      g.add(mesh(sharedGeo('crownBand', () => new THREE.CylinderGeometry(0.22, 0.2, 0.14, 16, 1, true)), gold, 0, 0.05, 0));
+      for (let i = 0; i < 5; i++) {
+        const a = (i / 5) * Math.PI * 2;
+        g.add(mesh(sharedGeo('crownSpike', () => new THREE.ConeGeometry(0.06, 0.16, 6).translate(0, 0.08, 0)), gold, Math.cos(a) * 0.2, 0.11, Math.sin(a) * 0.2));
+      }
+      g.add(mesh(sphereGeo(0.05, 8, 6), toon(COLORS.coral, { emissive: 0x661020 }), 0, 0.08, 0.21));
+      (g.children[0] as THREE.Mesh).material = gold;
+      ((g.children[0] as THREE.Mesh).material as THREE.Material).side = THREE.DoubleSide;
+      break;
+    }
+    default:
+      break;
+  }
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+  });
+  return { group: g, prop };
+}
+
 // ---------------------------------------------------------------------------------------------
 // The player's ship: a chubby toon hopper. Forward is -Z.
 
@@ -144,13 +232,15 @@ export interface ShipModel {
   glows: THREE.Object3D[];
   legs: THREE.Group[];
   cameraOffset: THREE.Vector3;
+  /** The hull's own material (ship paint). */
+  paint: THREE.MeshToonMaterial;
 }
 
 export function makeShipModel(): ShipModel {
   const group = new THREE.Group();
   const body = new THREE.Group();
   group.add(body);
-  const hullMat = toon(COLORS.coral);
+  const hullMat = toon(COLORS.coral).clone();
   const trim = toon(COLORS.cream);
   const dark = toon(0x4a4366);
   const hull = mesh(sharedGeo('shipHull', () => new THREE.CapsuleGeometry(1.15, 2.6, 8, 18).rotateX(Math.PI / 2)), hullMat);
@@ -218,7 +308,7 @@ export function makeShipModel(): ShipModel {
     legs.push(leg);
     body.add(leg);
   }
-  return { group, body, flames, glows, legs, cameraOffset: new THREE.Vector3(0, 3.4, 12.5) };
+  return { group, body, flames, glows, legs, cameraOffset: new THREE.Vector3(0, 3.4, 12.5), paint: hullMat };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -548,4 +638,61 @@ export function makeProbe(): { group: THREE.Group; light: THREE.Mesh } {
   g.add(body, band, dish, light);
   g.rotation.z = 0.35;
   return { group: g, light };
+}
+
+/** One of Bolt's lost gears: a chunky golden cog. */
+export function makeGear(): THREE.Group {
+  const g = new THREE.Group();
+  const mat = toon(COLORS.gold, { emissive: 0x403000 });
+  const wheel = mesh(sharedGeo('gearWheel', () => new THREE.CylinderGeometry(0.55, 0.55, 0.25, 16)), mat, 0, 0.75, 0);
+  wheel.rotation.x = Math.PI / 2;
+  g.add(wheel);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const tooth = mesh(sharedGeo('gearTooth', () => new THREE.BoxGeometry(0.22, 0.22, 0.25)), mat, Math.cos(a) * 0.62, 0.75 + Math.sin(a) * 0.62, 0);
+    tooth.rotation.z = a;
+    g.add(tooth);
+  }
+  const hub = mesh(sharedGeo('gearHub', () => new THREE.CylinderGeometry(0.18, 0.18, 0.32, 12)), toon(COLORS.ink), 0, 0.75, 0);
+  hub.rotation.x = Math.PI / 2;
+  g.add(hub);
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+  });
+  return g;
+}
+
+/** Bolt's geyser sensor: a little pole with a blinking green light. */
+export function makeSensor(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(mesh(sharedGeo('sensorPole', () => new THREE.CylinderGeometry(0.06, 0.08, 1.2, 8).translate(0, 0.6, 0)), toon(0xd8d4ee)));
+  g.add(mesh(sphereGeo(0.16), basic(0x3ddc97), 0, 1.25, 0));
+  return g;
+}
+
+/** The workbench in Pip's outpost: a table with tools and a glowing screen. */
+export function makeWorkbench(): THREE.Group {
+  const g = new THREE.Group();
+  const top = mesh(sharedGeo('benchTop', () => new THREE.BoxGeometry(2.6, 0.2, 1.3)), toon(COLORS.tangerine), 0, 1.0, 0);
+  g.add(top);
+  for (const [x, z] of [
+    [-1.1, -0.5],
+    [1.1, -0.5],
+    [-1.1, 0.5],
+    [1.1, 0.5],
+  ]) {
+    g.add(mesh(sharedGeo('benchLeg', () => new THREE.BoxGeometry(0.16, 1.0, 0.16)), toon(0x5a5478), x, 0.5, z));
+  }
+  const screen = mesh(sharedGeo('benchScreen', () => new THREE.BoxGeometry(1.1, 0.7, 0.08)), toon(0x4a4366), 0.5, 1.55, -0.45);
+  const glow = mesh(sharedGeo('benchGlow', () => new THREE.PlaneGeometry(0.95, 0.55)), basic(0x7fffd4), 0.5, 1.55, -0.4);
+  const wrench = mesh(sharedGeo('wrench', () => new THREE.BoxGeometry(0.7, 0.06, 0.12)), toon(0xbdb8cf), -0.6, 1.13, 0.2);
+  wrench.rotation.y = 0.5;
+  const box = mesh(sharedGeo('toolbox', () => new THREE.BoxGeometry(0.6, 0.35, 0.35)), toon(COLORS.coral), -0.6, 1.28, -0.25);
+  const gem = mesh(sharedGeo('cry0', () => faceted(new THREE.OctahedronGeometry(0.35, 0).scale(1, 1.6, 1))), toon(0xff6fae, { emissive: 0x401040 }), 0.2, 1.35, 0.3);
+  gem.scale.setScalar(0.5);
+  g.add(screen, glow, wrench, box, gem);
+  g.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+  });
+  return g;
 }

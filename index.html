@@ -30,6 +30,9 @@
         <div id="fl-auto"></div>
       </div>
       <div id="jet"><div class="bar"><i id="jet-fuel"></i></div></div>
+      <div id="air"><span id="air-l"></span><div class="bar"><i id="air-fill"></i></div></div>
+      <div id="race"></div>
+      <div id="status"></div>
       <div id="prompt"></div>
       <div id="toast"></div>
       <div id="controls"></div>
@@ -62,6 +65,7 @@
             <button id="t-no" class="small">Norsk</button>
           </div>
           <button id="t-voice" class="small"></button>
+          <button id="t-options" class="small"></button>
         </div>
         <div id="t-confirm" class="confirm">
           <p id="t-confirm-text"></p>
@@ -84,6 +88,7 @@
             <button id="p-no" class="small">Norsk</button>
           </div>
           <button id="p-voice" class="small"></button>
+          <button id="p-options" class="small"></button>
           <button id="p-quit"></button>
         </div>
       </div>
@@ -94,10 +99,33 @@
         <div class="tabs">
           <button data-tab="quests"></button>
           <button data-tab="finds"></button>
+          <button data-tab="planets"></button>
           <button data-tab="gear"></button>
         </div>
         <div id="log-body"></div>
         <div class="menu"><button id="log-close" class="primary"></button></div>
+      </div>
+    </div>
+    <div id="options" class="overlay">
+      <div class="panel small">
+        <h2 id="o-title"></h2>
+        <div class="menu vertical">
+          <button id="o-invert" class="small"></button>
+          <button id="o-mouse" class="small"></button>
+          <button id="o-stick" class="small"></button>
+          <button id="o-quality" class="small"></button>
+          <button id="o-music" class="small"></button>
+          <button id="o-back" class="primary"></button>
+        </div>
+      </div>
+    </div>
+
+    <div id="craft" class="overlay">
+      <div class="panel wide">
+        <h2 id="c-title"></h2>
+        <div id="c-inv"></div>
+        <div id="c-body"></div>
+        <div class="menu"><button id="c-close" class="primary"></button></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

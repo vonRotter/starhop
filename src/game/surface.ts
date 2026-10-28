@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { Noise2D, SeededRandom, clamp, lerp } from '../core/math';
 import { COLORS, basic, darken, faceted, glowTexture, mesh, sharedGeo, sphereGeo, toon } from '../core/palette';
 import { Particles } from './fx';
-import { Bean, makeCreature, makeProbe, makeResource, type CreatureModel } from './models';
+import { Bean, makeCreature, makeGear, makeProbe, makeResource, makeSensor, makeShipModel, makeWorkbench, type CreatureModel } from './models';
+import type { NpcId } from './state';
 import { SPECIES, type PlanetDef, type ResourceId, type SpeciesId } from './planets';
 
 // One planet's landing zone: a bounded heightmap with toon shading, props, wandering creatures,
@@ -56,13 +57,37 @@ export interface ResourceNode {
   done: boolean;
 }
 
-interface Geyser {
+export interface Geyser {
   x: number;
   z: number;
   y: number;
   timer: number;
   erupting: boolean;
+  vent: THREE.Mesh;
+  sensor: THREE.Object3D | null;
 }
+
+export interface Npc {
+  id: NpcId;
+  bean: Bean;
+  pos: THREE.Vector3;
+}
+
+export interface SandStorm {
+  phase: 'calm' | 'warn' | 'storm';
+  t: number;
+  /** 0..1 how strong the storm is right now (fog, wind). */
+  amount: number;
+  /** Horizontal wind direction (unit). */
+  wind: THREE.Vector3;
+}
+
+/** Where Bolt's three gears lie on Dune. */
+const GEAR_SPOTS: [number, number][] = [
+  [-85, 55],
+  [35, 112],
+  [-95, -72],
+];
 
 const skyVert = /* glsl */ `
   varying vec3 vDir;
@@ -78,10 +103,20 @@ const skyFrag = /* glsl */ `
   uniform vec3 uTop;
   uniform vec3 uHorizon;
   uniform vec3 uSunDir;
+  uniform float uAurora;
+  uniform float uTime;
   void main() {
     vec3 d = normalize(vDir);
     float h = clamp(d.y, 0.0, 1.0);
     vec3 col = mix(uHorizon, uTop, pow(h, 0.6));
+    if (uAurora > 0.0) {
+      // soft ribbons of colour across the sky (Frost)
+      float band = sin(d.x * 5.0 + uTime * 0.12 + sin(d.z * 3.5 + uTime * 0.2) * 1.6);
+      float hgt = smoothstep(0.12, 0.35, d.y) * (1.0 - smoothstep(0.6, 0.95, d.y));
+      float a = pow(max(0.0, band), 2.0) * hgt;
+      vec3 ac = mix(vec3(0.35, 1.0, 0.75), vec3(1.0, 0.5, 0.9), 0.5 + 0.5 * sin(d.z * 2.5 + d.x + uTime * 0.1));
+      col = mix(col, ac, a * 0.45 * uAurora);
+    }
     float s = max(0.0, dot(d, normalize(uSunDir)));
     col += vec3(1.0, 0.95, 0.8) * (pow(s, 400.0) * 1.5 + pow(s, 12.0) * 0.25);
     gl_FragColor = vec4(col, 1.0);
@@ -101,6 +136,20 @@ export class Surface {
   readonly scannables: Scannable[] = [];
   readonly resources: ResourceNode[] = [];
   readonly geysers: Geyser[] = [];
+  readonly npcs: Npc[] = [];
+  /** Slippery ice patches (Frost). */
+  readonly icePatches: { x: number; z: number; r: number }[] = [];
+  /** Mesas you can shelter behind (Dune). */
+  readonly mesas: { x: number; z: number; r: number }[] = [];
+  readonly gears: { idx: number; group: THREE.Group; taken: boolean }[] = [];
+  storm: SandStorm | null = null;
+  bench: THREE.Vector3 | null = null;
+  private wreckSmoke: THREE.Vector3 | null = null;
+  private readonly fogBase: [number, number];
+  private readonly skyTop: THREE.Color;
+  private readonly skyHorizon: THREE.Color;
+  private readonly _t = new THREE.Vector3();
+  private readonly _t2 = new THREE.Vector3();
   readonly fx = new Particles(900);
   readonly sun: THREE.DirectionalLight;
   readonly sunDir = new THREE.Vector3(0.45, 0.8, 0.35).normalize();
@@ -116,17 +165,29 @@ export class Surface {
   private readonly blinkers: THREE.Mesh[] = [];
   private terrain: THREE.Mesh | null = null;
 
-  constructor(readonly def: PlanetDef, opts: { probe: boolean }) {
+  constructor(
+    readonly def: PlanetDef,
+    opts: { probe: boolean; gears?: number[] | null; sensors?: number[]; shadows?: boolean; shadowSize?: number },
+  ) {
     this.noise = new Noise2D(def.seed);
     this.noise2 = new Noise2D(def.seed * 7 + 3);
     const s = this.scene;
-    s.fog = new THREE.Fog(def.skyHorizon, 140, 560);
+    this.fogBase = [140, 560];
+    s.fog = new THREE.Fog(def.skyHorizon, ...this.fogBase);
+    this.skyTop = new THREE.Color(def.skyTop);
+    this.skyHorizon = new THREE.Color(def.skyHorizon);
     this.sky = new THREE.Mesh(
       new THREE.SphereGeometry(800, 32, 16),
       new THREE.ShaderMaterial({
         vertexShader: skyVert,
         fragmentShader: skyFrag,
-        uniforms: { uTop: { value: new THREE.Color(def.skyTop) }, uHorizon: { value: new THREE.Color(def.skyHorizon) }, uSunDir: { value: this.sunDir } },
+        uniforms: {
+          uTop: { value: new THREE.Color(def.skyTop) },
+          uHorizon: { value: new THREE.Color(def.skyHorizon) },
+          uSunDir: { value: this.sunDir },
+          uAurora: { value: def.id === 'frost' ? 1 : 0 },
+          uTime: { value: 0 },
+        },
         side: THREE.BackSide,
         depthWrite: false,
         fog: false,
@@ -137,8 +198,8 @@ export class Surface {
     s.add(this.sky);
     s.add(new THREE.HemisphereLight(def.skyTop, darken(def.ground[1], 0.7), def.ambient));
     this.sun = new THREE.DirectionalLight(def.sunColor, 2.2);
-    this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(1024, 1024);
+    this.sun.castShadow = opts.shadows !== false;
+    this.sun.shadow.mapSize.setScalar(opts.shadowSize ?? 1024);
     const sc = this.sun.shadow.camera;
     sc.left = sc.bottom = -45;
     sc.right = sc.top = 45;
@@ -159,10 +220,10 @@ export class Surface {
         this.buildBloom(rng);
         break;
       case 'frost':
-        this.buildFrost(rng);
+        this.buildFrost(rng, opts.sensors ?? []);
         break;
       case 'dune':
-        this.buildDune(rng, opts.probe);
+        this.buildDune(rng, opts.probe, opts.gears ?? null);
         break;
     }
     if (def.id !== 'frost') this.buildClouds(rng);
@@ -230,8 +291,14 @@ export class Surface {
       const slope = 1 - nrm.getY(i);
       const t = clamp((h + this.def.hillAmp) / (this.def.hillAmp * 2.2), 0, 1);
       c.copy(cLow).lerp(cMid, smooth(0.2, 0.5, t)).lerp(cHigh, smooth(0.55, 0.9, t));
-      const patch = this.noise2.noise(x * 0.06, z * 0.06);
-      if (patch > 0.45 && slope < 0.2) c.lerp(cAcc, this.def.id === 'dune' ? 0.35 : 0.55);
+      if (this.def.id === 'dune') {
+        // long soft streaks of pink sand along the dunes instead of blotches
+        const streak = this.noise2.noise(x * 0.02, z * 0.07);
+        c.lerp(cAcc, smooth(0.3, 0.75, streak) * 0.3 * (1 - smooth(0.05, 0.25, slope)));
+      } else {
+        const patch = this.noise2.noise(x * 0.06, z * 0.06);
+        if (patch > 0.45 && slope < 0.2) c.lerp(cAcc, this.def.id === 'frost' ? 0.4 : 0.55);
+      }
       if (slope > 0.28 || h > 34) c.lerp(cRock, smooth(0.28, 0.5, slope) * 0.8 + (h > 34 ? 0.3 : 0));
       colors.set([c.r, c.g, c.b], i * 3);
     }
@@ -490,6 +557,15 @@ export class Surface {
     this.pip.group.position.copy(this.pipPos);
     this.scene.add(this.pip.group);
     this.colliders.push({ x: this.pipPos.x, z: this.pipPos.z, r: 0.6, top: this.pipPos.y + 1.6, bottom: this.pipPos.y - 1 });
+    this.npcs.push({ id: 'pip', bean: this.pip, pos: this.pipPos });
+    // the workbench
+    const bx = -4.5;
+    const bz = 13;
+    const bench = makeWorkbench();
+    bench.rotation.y = Math.atan2(-bx, -bz);
+    this.add(bench, bx, bz);
+    this.bench = new THREE.Vector3(bx, this.height(bx, bz), bz);
+    this.colliders.push({ x: bx, z: bz, r: 1.3, top: this.bench.y + 1.1, bottom: this.bench.y - 1 });
     for (let i = 0; i < 26; i++) this.rock(rng, rng.next() < 0.5 ? 0x8d7fc4 : 0xa898dc, rng.range(0.6, 2.6));
     this.addPlant(rng, 'glowcap', 6);
     this.resourcesAround(rng, 'crystal', 5, 1, 30);
@@ -497,6 +573,42 @@ export class Surface {
   }
 
   private buildBloom(rng: SeededRandom): void {
+    // Bolt's camp: a crashed ship, a tent and crates
+    const cx = -34;
+    const cz = 26;
+    const cy = this.height(cx, cz);
+    const wreck = makeShipModel();
+    wreck.paint.color.setHex(COLORS.mint);
+    for (const f of wreck.flames) f.visible = false;
+    for (const gl of wreck.glows) gl.visible = false;
+    wreck.group.rotation.set(0.35, 2.2, 0.25);
+    wreck.group.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+    });
+    this.add(wreck.group, cx - 6, cz + 3, this.height(cx - 6, cz + 3) + 0.8);
+    this.wreckSmoke = new THREE.Vector3(cx - 6, this.height(cx - 6, cz + 3) + 2.5, cz + 3);
+    this.colliders.push({ x: cx - 6, z: cz + 3, r: 3.2, top: cy + 2.5, bottom: cy - 2 });
+    const tent = mesh(sharedGeo('tent', () => faceted(new THREE.ConeGeometry(2.4, 3, 4))), toon(COLORS.candyYellow));
+    tent.rotation.y = 0.6;
+    tent.castShadow = true;
+    this.add(tent, cx + 5, cz + 4, this.height(cx + 5, cz + 4) + 1.4);
+    this.colliders.push({ x: cx + 5, z: cz + 4, r: 2.2, top: this.height(cx + 5, cz + 4) + 2.8, bottom: cy - 2 });
+    for (let i = 0; i < 3; i++) {
+      const crate = mesh(sharedGeo('crate', () => new THREE.BoxGeometry(1.4, 1.4, 1.4)), toon(i % 2 ? COLORS.tangerine : COLORS.candyLilac));
+      crate.castShadow = true;
+      crate.rotation.y = i * 0.7;
+      const x = cx + 1 + i * 1.5;
+      const z = cz - 4;
+      this.add(crate, x, z, this.height(x, z) + 0.7);
+    }
+    this.colliders.push({ x: cx + 2.5, z: cz - 4, r: 2.4, top: cy + 1.4, bottom: cy - 2 });
+    const bolt = new Bean(COLORS.mint, { hat: 'hardhat' });
+    bolt.group.scale.setScalar(1.45);
+    const bp = new THREE.Vector3(cx, cy, cz);
+    bolt.group.position.copy(bp);
+    this.scene.add(bolt.group);
+    this.colliders.push({ x: cx, z: cz, r: 0.6, top: cy + 1.6, bottom: cy - 1 });
+    this.npcs.push({ id: 'bolt', bean: bolt, pos: bp });
     for (let i = 0; i < 46; i++) {
       const p = this.spot(rng, 30, 145, 4);
       const tree = new THREE.Group();
@@ -532,13 +644,13 @@ export class Surface {
     this.addCreature(rng, 'flutter', 5);
   }
 
-  private buildFrost(rng: SeededRandom): void {
+  private buildFrost(rng: SeededRandom, sensors: number[]): void {
     // ice pillars: hexagonal columns with flat tops you can stand on; most carry ice on top
     for (let i = 0; i < 14; i++) {
       const p = this.spot(rng, 32, 135, 6);
       const r = rng.range(2.2, 3.4);
       const h = rng.range(6, 11);
-      const col = mesh(sharedGeo(`pillar${i % 3}`, () => faceted(new THREE.CylinderGeometry(1, 1.15, 1, 6).translate(0, 0.5, 0))), toon(i % 2 ? 0xbfe9ff : 0xa6dcff));
+      const col = mesh(sharedGeo(`pillar${i % 3}`, () => faceted(new THREE.CylinderGeometry(1, 1.15, 1, 6).translate(0, 0.5, 0))), toon([0xbfe9ff, 0x9ff0e0, 0xd9c8ff, 0xffc8ec][i % 4]));
       col.scale.set(r, h + 3, r);
       col.castShadow = true;
       this.add(col, p.x, p.z, p.y - 3);
@@ -551,7 +663,7 @@ export class Surface {
     }
     for (let i = 0; i < 40; i++) {
       const p = this.spot(rng, 24, 145, 1.5);
-      const sp = mesh(sharedGeo('spike', () => faceted(new THREE.ConeGeometry(0.6, 1, 5).translate(0, 0.5, 0))), toon(0xd6f6ff));
+      const sp = mesh(sharedGeo('spike', () => faceted(new THREE.ConeGeometry(0.6, 1, 5).translate(0, 0.5, 0))), toon(rng.pick([0xd6f6ff, 0xa8f0e0, 0xe0ccff, 0xffc8ec, 0xfff0a8])));
       const h = rng.range(1.5, 4.5);
       sp.scale.set(rng.range(0.8, 1.4), h, rng.range(0.8, 1.4));
       sp.rotation.set(rng.range(-0.25, 0.25), rng.next() * 6, rng.range(-0.25, 0.25));
@@ -568,7 +680,34 @@ export class Surface {
       const hole = mesh(sharedGeo('hole', () => new THREE.CircleGeometry(1.1, 16)), toon(0x2b4a6a), p.x, p.y + 0.12, p.z);
       hole.rotation.x = -Math.PI / 2;
       this.scene.add(vent, hole);
-      this.geysers.push({ x: p.x, z: p.z, y: p.y, timer: rng.range(0, 5), erupting: false });
+      const g: Geyser = { x: p.x, z: p.z, y: p.y, timer: rng.range(0, 5), erupting: false, vent, sensor: null };
+      this.geysers.push(g);
+      if (sensors.includes(i)) this.placeSensor(i);
+    }
+    // slippery ice patches: glossy discs that follow the ground
+    for (let i = 0; i < 9; i++) {
+      const p = i === 0 ? { x: -22, z: 18, y: 0 } : this.spot(rng, 26, 130, 4);
+      const r = i === 0 ? 6 : rng.range(4.5, 8);
+      // several rings of vertices so the disc bends with the ground
+      const ring = new THREE.RingGeometry(0.01, r, 28, 5);
+      ring.rotateX(-Math.PI / 2);
+      const rp = ring.getAttribute('position') as THREE.BufferAttribute;
+      for (let k = 0; k < rp.count; k++) rp.setY(k, this.height(p.x + rp.getX(k), p.z + rp.getZ(k)) + 0.08);
+      const patch = mesh(ring, toon(0x8fe0ff, { transparent: true, opacity: 0.75, emissive: 0x104060 }), p.x, 0, p.z);
+      patch.receiveShadow = true;
+      this.scene.add(patch);
+      this.icePatches.push({ x: p.x, z: p.z, r: r * 0.95 });
+    }
+    // candy-coloured crystal clusters
+    for (let i = 0; i < 18; i++) {
+      const p = this.spot(rng, 24, 145, 1.5);
+      const col = rng.pick([0xff9fd0, 0x9ff0c8, 0xc9a8ff, 0xffe47a]);
+      for (let k = 0; k < 3; k++) {
+        const c = mesh(sharedGeo('frostGem', () => faceted(new THREE.OctahedronGeometry(0.4, 0).scale(1, 2.4, 1))), toon(col, { emissive: darken(col, 0.25) }), p.x + rng.range(-0.6, 0.6), p.y + 0.5, p.z + rng.range(-0.6, 0.6));
+        c.rotation.set(rng.range(-0.4, 0.4), rng.next() * 6, rng.range(-0.4, 0.4));
+        c.scale.setScalar(rng.range(0.6, 1.1));
+        this.scene.add(c);
+      }
     }
     this.resourcesAround(rng, 'ice', 3, 1, 26);
     this.addPlant(rng, 'frostbell', 6);
@@ -576,7 +715,8 @@ export class Surface {
     this.addCreature(rng, 'snowpuff', 5);
   }
 
-  private buildDune(rng: SeededRandom, probe: boolean): void {
+  private buildDune(rng: SeededRandom, probe: boolean, gears: number[] | null): void {
+    this.storm = { phase: 'calm', t: 30, amount: 0, wind: new THREE.Vector3(1, 0, 0.35).normalize() };
     // mesas
     for (let i = 0; i < 7; i++) {
       const p = this.spot(rng, 40, 135, 10);
@@ -592,12 +732,31 @@ export class Surface {
       }
       this.add(m, p.x, p.z, p.y);
       this.colliders.push({ x: p.x, z: p.z, r: r * 0.95, top: p.y + h - 2, bottom: p.y - 3 });
+      this.mesas.push({ x: p.x, z: p.z, r });
     }
     for (let i = 0; i < 22; i++) this.rock(rng, rng.next() < 0.5 ? 0xd98a4a : 0xc77a45, rng.range(0.6, 2.4));
     this.addPlant(rng, 'spinecactus', 8);
     this.resourcesAround(rng, 'crystal', 10, 2, 28);
     this.addCreature(rng, 'scuttle', 6);
     this.addCreature(rng, 'skyjelly', 4);
+    if (gears) {
+      GEAR_SPOTS.forEach(([gx, gz], idx) => {
+        if (gears.includes(idx)) return;
+        let x = gx;
+        let z = gz;
+        for (let k = 0; k < 12 && this.colliders.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 2); k++) {
+          x += 4;
+          z -= 3;
+        }
+        const g = makeGear();
+        this.add(g, x, z, this.height(x, z));
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: 0xffd23f, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+        glow.scale.setScalar(4);
+        glow.position.y = 0.8;
+        g.add(glow);
+        this.gears.push({ idx, group: g, taken: false });
+      });
+    }
     if (probe) {
       const pr = makeProbe();
       const x = 92;
@@ -614,8 +773,89 @@ export class Surface {
 
   // ------------------------------------------------------------------ update
 
+  /** Adds Bolt's sensor beside geyser i. */
+  placeSensor(i: number): void {
+    const g = this.geysers[i];
+    if (!g || g.sensor) return;
+    const s = makeSensor();
+    s.position.set(g.x + 1.9, this.height(g.x + 1.9, g.z), g.z);
+    this.scene.add(s);
+    g.sensor = s;
+  }
+
+  slippery(x: number, z: number): boolean {
+    for (const p of this.icePatches) if ((x - p.x) ** 2 + (z - p.z) ** 2 < p.r * p.r) return true;
+    return false;
+  }
+
+  /** True when a mesa blocks the storm wind for someone standing at p. */
+  sheltered(p: THREE.Vector3): boolean {
+    const w = this.storm?.wind;
+    if (!w) return true;
+    for (const m of this.mesas) {
+      const rx = p.x - m.x;
+      const rz = p.z - m.z;
+      const along = rx * w.x + rz * w.z;
+      const side = Math.abs(rx * w.z - rz * w.x);
+      if (along > 0 && along < m.r + 14 && side < m.r * 0.95) return true;
+    }
+    return false;
+  }
+
+  /** Starts a sandstorm warning now (Dune; tests and quests). */
+  forceStorm(): void {
+    if (this.storm) {
+      this.storm.phase = 'warn';
+      this.storm.t = 4;
+    }
+  }
+
+  private updateStorm(dt: number, focus: THREE.Vector3): void {
+    const st = this.storm!;
+    st.t -= dt;
+    if (st.t <= 0) {
+      if (st.phase === 'calm') {
+        st.phase = 'warn';
+        st.t = 5;
+      } else if (st.phase === 'warn') {
+        st.phase = 'storm';
+        st.t = 20;
+        const a = Math.random() * Math.PI * 2;
+        st.wind.set(Math.cos(a), 0, Math.sin(a));
+      } else {
+        st.phase = 'calm';
+        st.t = 50 + Math.random() * 20;
+      }
+    }
+    const want = st.phase === 'storm' ? 1 : 0;
+    st.amount += (want - st.amount) * Math.min(1, dt * 0.8);
+    const fog = this.scene.fog as THREE.Fog;
+    fog.near = lerp(this.fogBase[0], 6, st.amount);
+    fog.far = lerp(this.fogBase[1], 70, st.amount);
+    const sand = this._t2.set(0.85, 0.62, 0.4);
+    fog.color.setRGB(lerp(this.skyHorizon.r, sand.x, st.amount), lerp(this.skyHorizon.g, sand.y, st.amount), lerp(this.skyHorizon.b, sand.z, st.amount));
+    const u = (this.sky.material as THREE.ShaderMaterial).uniforms;
+    (u.uHorizon.value as THREE.Color).copy(fog.color);
+    (u.uTop.value as THREE.Color).setRGB(lerp(this.skyTop.r, 0.8, st.amount), lerp(this.skyTop.g, 0.55, st.amount), lerp(this.skyTop.b, 0.35, st.amount));
+    // blowing sand around the player
+    if (st.amount > 0.05) {
+      const n = Math.floor(st.amount * 6);
+      for (let i = 0; i < n; i++) {
+        this._t.set(focus.x - st.wind.x * 18 + (Math.random() - 0.5) * 36, focus.y + Math.random() * 6, focus.z - st.wind.z * 18 + (Math.random() - 0.5) * 36);
+        this.fx.emit(this._t, this._t2.copy(st.wind).multiplyScalar(22 + Math.random() * 8).setY(Math.random() * 2 - 0.5), 0xf2c08a, 1.6, 1.6, { grow: 1.2 });
+      }
+    }
+  }
+
   update(dt: number, time: number, player: THREE.Vector3, focus: THREE.Vector3, camera: THREE.Camera): { geyserLaunch: boolean } {
     this.sky.position.copy(camera.position);
+    (this.sky.material as THREE.ShaderMaterial).uniforms.uTime.value = time;
+    if (this.storm && dt > 0) this.updateStorm(dt, focus);
+    if (this.wreckSmoke && Math.random() < dt * 5) {
+      this.fx.emit(this.wreckSmoke, this._t2.set(Math.random() - 0.5, 2.5, Math.random() - 0.5), 0x8a86a0, 2, 2.2, { grow: 2.5, drag: 0.5 });
+    }
+    for (const n of this.npcs) if (n.id !== 'pip') n.bean.update(dt, 0, true, 0);
+    for (const g of this.gears) if (!g.taken) g.group.rotation.y = time * 1.5;
     this.sun.position.copy(focus).addScaledVector(this.sunDir, 120);
     this.sun.target.position.copy(focus);
     for (const c of this.clouds) {
@@ -682,10 +922,18 @@ export class Surface {
     }
     // geysers
     let launch = false;
-    const tmp = new THREE.Vector3();
-    const vel = new THREE.Vector3();
+    const tmp = this._t;
+    const vel = this._t2;
     for (const g of this.geysers) {
       g.timer -= dt;
+      // rumble just before it blows: the vent shakes and puffs
+      const warn = !g.erupting && g.timer < 1.2;
+      g.vent.position.x = g.x + (warn ? Math.sin(time * 50) * 0.08 : 0);
+      if (warn && Math.random() < dt * 14) {
+        tmp.set(g.x + (Math.random() - 0.5), g.y + 0.4, g.z + (Math.random() - 0.5));
+        vel.set(0, 4, 0);
+        this.fx.emit(tmp, vel, 0xffffff, 1.4, 0.8, { grow: 1.5 });
+      }
       if (g.timer <= 0) {
         g.erupting = !g.erupting;
         g.timer = g.erupting ? 2.2 : 3.5 + Math.random() * 2;
@@ -696,7 +944,7 @@ export class Surface {
           vel.set((Math.random() - 0.5) * 2, 14 + Math.random() * 8, (Math.random() - 0.5) * 2);
           this.fx.emit(tmp, vel, 0xffffff, 2.2, 1.4, { g: 6, grow: 2, drag: 0.6 });
         }
-        if (Math.hypot(player.x - g.x, player.z - g.z) < 1.8 && player.y < g.y + 3) launch = true;
+        if (Math.hypot(player.x - g.x, player.z - g.z) < 2.3 && player.y < g.y + 3) launch = true;
       } else if (Math.random() < dt * 3) {
         tmp.set(g.x, g.y + 0.4, g.z);
         vel.set(0, 2, 0);

@@ -102,9 +102,9 @@ export const PLANETS: PlanetDef[] = [
     atmosphere: 0xd8f4ff,
     ring: 0xbfe6ff,
     seed: 37,
-    skyTop: 0x3f7fe0,
-    skyHorizon: 0xd2e8ff,
-    ground: [0xa9d2f2, 0xd2eafc, 0xffffff, 0x6cc0f5],
+    skyTop: 0x4a6ae8,
+    skyHorizon: 0xf2dcff,
+    ground: [0x9fd0f5, 0xd2eafc, 0xffffff, 0xc9b8ff],
     sunColor: 0xeef6ff,
     ambient: 0.8,
     gravity: 0.9,
@@ -121,7 +121,7 @@ export const PLANETS: PlanetDef[] = [
     seed: 53,
     skyTop: 0xff9a6b,
     skyHorizon: 0xffe3b0,
-    ground: [0xe9a35e, 0xf5c27e, 0xfadca4, 0xff9fd0],
+    ground: [0xe9a35e, 0xf5c27e, 0xfadca4, 0xffb08a],
     sunColor: 0xfff0d0,
     ambient: 0.7,
     gravity: 0.85,
@@ -136,3 +136,9 @@ export const planetById = (id: PlanetId): PlanetDef => PLANETS.find((p) => p.id 
 export const STORM_RADIUS = 1500;
 
 export const SUN_RADIUS = 380;
+
+/** Planets where the astronaut needs the air meter. */
+export const HOSTILE: PlanetId[] = ['frost', 'dune'];
+
+/** Resource nodes on each landing zone (planet completion: collect all). */
+export const NODE_COUNT: Record<PlanetId, number> = { pebble: 5, bloom: 11, frost: 11, dune: 10 };

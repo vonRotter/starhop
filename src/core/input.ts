@@ -152,7 +152,10 @@ const curve = (v: number, p = 1.6): number => Math.sign(v) * Math.pow(Math.abs(v
 
 export class Input {
   device: 'keyboard' | 'gamepad' = 'keyboard';
-  invertPadY = false;
+  /** Options: invert up/down for mouse and sticks, and look speeds (1 = normal). */
+  invertY = false;
+  mouseSens = 1;
+  stickSens = 1;
   private readonly held = new Set<string>();
   private readonly actions = new Set<Action>();
   readonly cursor = { x: 0, y: 0 };
@@ -186,8 +189,8 @@ export class Input {
       this.mouseDelta.x += mx;
       this.mouseDelta.y += my;
       const s = 0.0028;
-      this.cursor.x += mx * s;
-      this.cursor.y += my * s;
+      this.cursor.x += mx * s * this.mouseSens;
+      this.cursor.y += my * s * this.mouseSens * (this.invertY ? -1 : 1);
       const len = Math.hypot(this.cursor.x, this.cursor.y);
       if (len > 1) {
         this.cursor.x /= len;
@@ -323,9 +326,10 @@ export class Input {
     out.slide = this.down(FLIGHT_KEYS, 'slide');
     if (this.padConnected) {
       const [lx, ly, rx, ry] = this.padAxes.map((a) => deadzone(a));
-      const yInv = this.invertPadY ? -1 : 1;
-      out.yaw += curve(rx);
-      out.pitch += -curve(ry) * yInv;
+      const yInv = this.invertY ? -1 : 1;
+      const ss = this.stickSens;
+      out.yaw += clamp(curve(rx) * ss, -1, 1);
+      out.pitch += clamp(-curve(ry) * yInv * ss, -1, 1);
       out.roll += curve(lx, 1.3);
       out.throttleDelta += -ly;
       const b = this.padButtons;
@@ -349,8 +353,8 @@ export class Input {
     const out: FootInput = {
       moveX: k('right') - k('left'),
       moveY: k('fwd') - k('backward'),
-      lookX: (k('lookRight') - k('lookLeft')) * 2.2 * dt + this.mouseDelta.x * 0.0035,
-      lookY: (k('lookDown') - k('lookUp')) * 1.4 * dt + this.mouseDelta.y * 0.0035,
+      lookX: (k('lookRight') - k('lookLeft')) * 2.2 * dt + this.mouseDelta.x * 0.0035 * this.mouseSens,
+      lookY: (k('lookDown') - k('lookUp')) * 1.4 * dt + this.mouseDelta.y * 0.0035 * this.mouseSens * (this.invertY ? -1 : 1),
       jumpHeld: this.down(FOOT_KEYS, 'jump'),
       run: this.down(FOOT_KEYS, 'run'),
       useHeld: this.down(FOOT_KEYS, 'use'),
@@ -360,8 +364,8 @@ export class Input {
       const [lx, ly, rx, ry] = this.padAxes.map((a) => deadzone(a));
       out.moveX += lx;
       out.moveY += -ly;
-      out.lookX += curve(rx, 1.4) * 2.6 * dt;
-      out.lookY += curve(ry, 1.4) * 1.8 * dt * (this.invertPadY ? -1 : 1);
+      out.lookX += curve(rx, 1.4) * 2.6 * dt * this.stickSens;
+      out.lookY += curve(ry, 1.4) * 1.8 * dt * (this.invertY ? -1 : 1) * this.stickSens;
       const b = this.padButtons;
       out.jumpHeld ||= !!b[PAD.A];
       out.useHeld ||= !!b[PAD.X];

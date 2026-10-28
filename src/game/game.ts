@@ -1,21 +1,34 @@
 import * as THREE from 'three';
 import { couch, mountBackButton } from '../couch';
-import { sfx, setHum, unlockAudio } from '../core/audio';
+import { setHum, setMusic, setMusicOn, sfx, unlockAudio, type MusicArea } from '../core/audio';
 import { getLang, onLangChange, setLang, t, type Lang } from '../core/i18n';
 import { Input } from '../core/input';
 import { clamp, dampFactor, rand } from '../core/math';
 import { COLORS } from '../core/palette';
 import { say, setVoice, stopVoice, voiceOn } from '../core/voice';
 import { Hud, keyCap, RES_ICON, type Marker } from '../ui/hud';
-import { renderLog, type LogTab } from '../ui/menus';
+import { itemName, renderCraft, renderLog, type LogTab } from '../ui/menus';
+import { thumbnails } from '../ui/thumbs';
 import { Bean, CHAR_HEIGHT } from './models';
-import { PLANETS, SPECIES, STORM_RADIUS, SUN_RADIUS, planetById, type PlanetDef, type PlanetId, type ResourceId } from './planets';
-import { AIR_FLIGHT, SPACE_FLIGHT, Ship } from './ship';
+import { HOSTILE, PLANETS, SPECIES, STORM_RADIUS, SUN_RADIUS, planetById, type PlanetDef, type PlanetId, type ResourceId } from './planets';
+import { Race, RING_R } from './race';
+import { AIR_FLIGHT, SPACE_FLIGHT, Ship, type FlightParams } from './ship';
 import { Space } from './space';
 import { CEILING, FLY_RADIUS, Surface, WALK_RADIUS, type ResourceNode, type Scannable } from './surface';
 import {
+  NPC_HOME,
+  PAINT_COLORS,
   QUESTS,
+  RACE_MEDALS,
+  RECIPES,
   clearState,
+  craft,
+  currentQuest,
+  owns,
+  questActive,
+  type NpcId,
+  type HatId,
+  type PaintId,
   loadSetting,
   loadState,
   newState,
@@ -26,7 +39,12 @@ import {
 } from './state';
 
 type Mode = 'title' | 'space' | 'air' | 'foot';
-type Overlay = 'title' | 'pause' | 'log' | 'dialog' | null;
+type Overlay = 'title' | 'pause' | 'log' | 'dialog' | 'options' | 'craft' | null;
+type Quality = 'high' | 'medium' | 'low';
+const OVERLAYS = ['title', 'pause', 'log', 'dialog', 'options', 'craft'];
+const SENS = [0.5, 0.75, 1, 1.4, 2];
+/** Seconds of air on hostile planets (without / with the air suit). */
+const AIR_SECS = [75, 150];
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 const _v = new THREE.Vector3();
@@ -89,10 +107,26 @@ export class Game {
   private saveTimer = 0;
   private stormCooldown = 0;
   private edgeCooldown = 0;
-  private wasReady = false;
+  private npcReady: Record<NpcId, boolean> = { pip: false, bolt: false };
   private logTab: LogTab = 'quests';
   private titleAngle = 0;
-  private hello = true;
+  readonly race = new Race();
+  private readonly racePrev = new THREE.Vector3();
+  private raceMsg = 0;
+  private bumpCooldown = 0;
+  raceAuto = false;
+  /** Air left on hostile planets, 0..1. */
+  air = 1;
+  private airWarned = false;
+  private sensorProgress = 0;
+  private stormPhase = '';
+  private landCam = 0;
+  private cine = 0;
+  private optionsFrom: Overlay = 'title';
+  private quality: Quality = 'high';
+  private musicOn = true;
+  private spaceParams: FlightParams = SPACE_FLIGHT;
+  private airParams: FlightParams = AIR_FLIGHT;
   /** Simulation steps per rendered frame (1 in play; tests raise it). */
   substeps = 1;
 
@@ -109,7 +143,7 @@ export class Game {
       new THREE.MeshBasicMaterial({ color: 0x4cfcd2, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false }),
     );
     this.beam.visible = false;
-    this.space.scene.add(this.ship.root);
+    this.space.scene.add(this.ship.root, this.race.group);
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.renderer.domElement.addEventListener('click', () => {
@@ -124,6 +158,14 @@ export class Game {
     setLang(lang === 'no' ? 'no' : 'en');
     const v = loadSetting('voice');
     setVoice(v === null ? !!couch : v === '1');
+    this.input.invertY = loadSetting('invert') === '1';
+    this.input.mouseSens = Number(loadSetting('mouse')) || 1;
+    this.input.stickSens = Number(loadSetting('stick')) || 1;
+    const q = loadSetting('quality');
+    this.quality = q === 'medium' || q === 'low' ? q : 'high';
+    this.musicOn = loadSetting('music') !== '0';
+    setMusicOn(this.musicOn);
+    this.applyQuality();
     onLangChange(() => this.refreshTexts());
     this.wireMenus();
     this.refreshTexts();
@@ -131,6 +173,33 @@ export class Game {
     this.titleCamera(0);
     (window as unknown as { __sh: unknown }).__sh = this.testApi();
     requestAnimationFrame(() => this.frame());
+  }
+
+  private applyQuality(): void {
+    const q = this.quality;
+    this.renderer.setPixelRatio(q === 'high' ? Math.min(window.devicePixelRatio, 1.5) : q === 'medium' ? 1 : 0.75);
+    const shadows = q !== 'low';
+    if (this.renderer.shadowMap.enabled !== shadows) {
+      this.renderer.shadowMap.enabled = shadows;
+      // materials must recompile with or without shadow code
+      for (const sc of [this.space.scene, this.surface?.scene]) {
+        sc?.traverse((o) => {
+          const m = (o as THREE.Mesh).material;
+          if (m) for (const mm of Array.isArray(m) ? m : [m]) mm.needsUpdate = true;
+        });
+      }
+    }
+    if (this.surface) {
+      const sun = this.surface.sun;
+      sun.castShadow = shadows;
+      const size = q === 'high' ? 1024 : 512;
+      if (sun.shadow.mapSize.x !== size) {
+        sun.shadow.mapSize.setScalar(size);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+      }
+    }
+    this.resize();
   }
 
   private resize(): void {
@@ -172,6 +241,42 @@ export class Game {
       this.toTitle();
     });
     $('log-close').addEventListener('click', () => this.closeOverlay());
+    $('t-options').addEventListener('click', () => this.openOptions('title'));
+    $('p-options').addEventListener('click', () => this.openOptions('pause'));
+    $('o-back').addEventListener('click', () => this.closeOptions());
+    $('o-invert').addEventListener('click', () => {
+      this.input.invertY = !this.input.invertY;
+      saveSetting('invert', this.input.invertY ? '1' : '0');
+      this.refreshTexts();
+    });
+    const cycle = (v: number): number => SENS[(SENS.indexOf(v) + 1) % SENS.length] ?? 1;
+    $('o-mouse').addEventListener('click', () => {
+      this.input.mouseSens = cycle(this.input.mouseSens);
+      saveSetting('mouse', String(this.input.mouseSens));
+      this.refreshTexts();
+    });
+    $('o-stick').addEventListener('click', () => {
+      this.input.stickSens = cycle(this.input.stickSens);
+      saveSetting('stick', String(this.input.stickSens));
+      this.refreshTexts();
+    });
+    $('o-quality').addEventListener('click', () => {
+      this.quality = this.quality === 'high' ? 'medium' : this.quality === 'medium' ? 'low' : 'high';
+      saveSetting('quality', this.quality);
+      this.applyQuality();
+      this.refreshTexts();
+    });
+    $('o-music').addEventListener('click', () => {
+      this.musicOn = !this.musicOn;
+      saveSetting('music', this.musicOn ? '1' : '0');
+      setMusicOn(this.musicOn);
+      this.refreshTexts();
+    });
+    $('c-close').addEventListener('click', () => this.closeOverlay());
+    $('c-body').addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-item]');
+      if (b) this.useItem(b.dataset.item!);
+    });
     document.querySelectorAll<HTMLButtonElement>('#log .tabs button').forEach((b) =>
       b.addEventListener('click', () => {
         this.logTab = b.dataset.tab as LogTab;
@@ -205,6 +310,19 @@ export class Game {
     $('p-log').textContent = t('questLog');
     $('p-quit').textContent = t('quitTitle');
     $('log-close').textContent = t('close');
+    $('t-options').textContent = `⚙ ${t('options')}`;
+    $('p-options').textContent = `⚙ ${t('options')}`;
+    $('o-title').textContent = t('options');
+    $('o-back').textContent = t('back');
+    $('o-invert').textContent = t('optInvert', { v: this.input.invertY ? t('on') : t('off') });
+    const dots = (v: number): string => '●'.repeat(SENS.indexOf(v) + 1 || 3) + '○'.repeat(SENS.length - (SENS.indexOf(v) + 1 || 3));
+    $('o-mouse').textContent = t('optMouse', { v: dots(this.input.mouseSens) });
+    $('o-stick').textContent = t('optStick', { v: dots(this.input.stickSens) });
+    $('o-quality').textContent = t('optQuality', { v: t(this.quality === 'high' ? 'qHigh' : this.quality === 'medium' ? 'qMedium' : 'qLow') });
+    $('o-music').textContent = t('optMusic', { v: this.musicOn ? t('on') : t('off') });
+    $('c-title').textContent = `🔧 ${t('benchTitle')}`;
+    $('c-close').textContent = t('close');
+    if (this.overlay === 'craft') this.renderCraftPanel();
     for (const id of ['t', 'p']) {
       $(`${id}-voice`).textContent = voiceOn() ? t('voiceOn') : t('voiceOff');
       $(`${id}-voice`).classList.toggle('on', voiceOn());
@@ -212,7 +330,7 @@ export class Game {
       $(`${id}-no`).classList.toggle('on', getLang() === 'no');
     }
     const tabs = document.querySelectorAll<HTMLButtonElement>('#log .tabs button');
-    const names: Record<string, string> = { quests: t('tabQuests'), finds: t('tabFinds'), gear: t('tabGear') };
+    const names: Record<string, string> = { quests: t('tabQuests'), finds: t('tabFinds'), planets: t('tabPlanets'), gear: t('tabGear') };
     tabs.forEach((b) => (b.textContent = names[b.dataset.tab!]));
     ($('t-continue') as HTMLButtonElement).style.display = loadState() ? '' : 'none';
     if (this.overlay === 'log') this.renderLogPanel();
@@ -221,7 +339,7 @@ export class Game {
   }
 
   private showOverlay(o: Overlay): void {
-    for (const id of ['title', 'pause', 'log', 'dialog']) $(id).classList.toggle('visible', id === o);
+    for (const id of OVERLAYS) $(id).classList.toggle('visible', id === o);
     this.overlay = o;
     if (o) {
       this.input.exitPointerLock();
@@ -259,7 +377,8 @@ export class Game {
     if (i.pressed('menuDown') || i.pressed('menuRight')) move(1);
     // Enter on a focused button clicks natively; the gamepad's A needs a nudge
     if (i.pressed('confirm') && i.device === 'gamepad') (document.activeElement as HTMLButtonElement | null)?.click?.();
-    if (i.pressed('back') && (this.overlay === 'log' || this.overlay === 'pause')) this.closeOverlay();
+    if (i.pressed('back') && this.overlay === 'options') this.closeOptions();
+    else if (i.pressed('back') && (this.overlay === 'log' || this.overlay === 'pause' || this.overlay === 'craft')) this.closeOverlay();
     else if (i.pressed('log') && this.overlay === 'log') this.closeOverlay();
   }
 
@@ -269,13 +388,86 @@ export class Game {
     this.focusFirst($('log-close'));
   }
 
+  private openOptions(from: Overlay): void {
+    this.optionsFrom = from;
+    this.refreshTexts();
+    this.showOverlay('options');
+    this.focusFirst($('o-invert'));
+  }
+
+  private closeOptions(): void {
+    this.showOverlay(this.optionsFrom);
+    this.focusFirst(this.optionsFrom === 'title' ? $('t-options') : $('p-options'));
+  }
+
+  private openCraft(): void {
+    this.hud.prompt(null);
+    this.hud.scanRing(this.camera, null);
+    this.showOverlay('craft');
+    this.renderCraftPanel();
+    this.focusFirst($('c-body').querySelector<HTMLButtonElement>('button') ?? undefined);
+  }
+
+  private renderCraftPanel(): void {
+    const s = this.state;
+    $('c-inv').innerHTML = `${RES_ICON.crystal} ${s.inv.crystal} &nbsp; ${RES_ICON.ice} ${s.inv.ice} &nbsp; ${RES_ICON.fruit} ${s.inv.fruit}`;
+    $('c-body').innerHTML = renderCraft(s, (id) => '#' + PAINT_COLORS[id as PaintId].toString(16).padStart(6, '0'));
+  }
+
+  /** Workbench button: equip what you have, or make it if you can. */
+  useItem(key: string): boolean {
+    const s = this.state;
+    const [kind, id] = key.split(':') as ['upgrade' | 'paint' | 'hat', string];
+    let ok = false;
+    if (owns(s, kind, id)) {
+      if (kind === 'paint') s.paint = id as PaintId;
+      if (kind === 'hat') s.hat = id as HatId;
+      ok = kind !== 'upgrade';
+      if (ok) sfx.pickup();
+    } else {
+      const r = RECIPES.find((x) => x.kind === kind && x.id === id);
+      if (r && craft(s, r)) {
+        ok = true;
+        sfx.craft();
+        const msg = t('crafted', { x: itemName(r) });
+        this.hud.toast(msg, 2.5);
+        say(msg);
+      } else sfx.deny();
+    }
+    this.applyGear();
+    this.hud.inventory(s);
+    this.save();
+    this.renderCraftPanel();
+    $('c-body').querySelector<HTMLButtonElement>(`button[data-item="${key}"]`)?.focus();
+    return ok;
+  }
+
+  /** Paint, hat and the flight numbers from upgrades. */
+  private applyGear(): void {
+    const s = this.state;
+    const paint = this.ship.model.paint;
+    paint.color.setHex(PAINT_COLORS[s.paint] ?? PAINT_COLORS.coral);
+    paint.emissive.setHex(s.paint === 'gold' ? 0x403000 : 0x000000);
+    this.bean.setHat(s.hat);
+    const tune = (b: FlightParams): FlightParams => ({
+      ...b,
+      boostSpeed: b.boostSpeed * (s.upgrades.includes('boost') ? 1.2 : 1),
+      boostDrain: b.boostDrain * (s.upgrades.includes('boost') ? 0.8 : 1),
+      energy: b.energy * (s.upgrades.includes('tank') ? 1.6 : 1),
+    });
+    this.spaceParams = tune(SPACE_FLIGHT);
+    this.airParams = tune(AIR_FLIGHT);
+    this.ship.params = this.surface ? this.airParams : this.spaceParams;
+  }
+
   private renderLogPanel(): void {
-    $('log-body').innerHTML = renderLog(this.state, this.logTab);
+    $('log-body').innerHTML = renderLog(this.state, this.logTab, this.logTab === 'finds' ? thumbnails(this.renderer) : {});
     document.querySelectorAll<HTMLButtonElement>('#log .tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === this.logTab));
   }
 
-  private dialog(text: string, extra: string, buttons: { label: string; action: () => void }[]): void {
-    $('dlg-who').textContent = t('pipName');
+  private dialog(text: string, extra: string, buttons: { label: string; action: () => void }[], npc: NpcId = 'pip'): void {
+    $('dlg-who').textContent = t(`${npc}Name`);
+    $('dialog').classList.toggle('bolt', npc === 'bolt');
     $('dlg-text').textContent = text;
     $('dlg-extra').innerHTML = extra;
     const box = $('dlg-buttons');
@@ -291,7 +483,7 @@ export class Game {
       box.appendChild(el);
     });
     this.showOverlay('dialog');
-    say(text, { pitch: 1.25 });
+    say(text, { pitch: npc === 'bolt' ? 0.9 : 1.25 });
   }
 
   // ================================================================== game flow
@@ -299,7 +491,6 @@ export class Game {
   private newGame(): void {
     clearState();
     this.state = newState();
-    this.hello = true;
     this.startPlaying();
     this.enterSurface('pebble', 'landed');
     // stand facing Pip
@@ -315,7 +506,6 @@ export class Game {
     const s = loadState();
     if (!s) return this.newGame();
     this.state = s;
-    this.hello = s.quest === 0 && !s.accepted;
     this.startPlaying();
     if (s.where === 'space') this.enterSpace(null);
     else this.enterSurface(s.where, 'landed');
@@ -328,7 +518,10 @@ export class Game {
     this.autoLand = null;
     this.hyper = null;
     this.takeoff = 0;
-    this.wasReady = questReady(this.state);
+    this.race.reset();
+    this.air = 1;
+    for (const n of Object.keys(this.npcReady) as NpcId[]) this.npcReady[n] = questReady(this.state, n);
+    this.applyGear();
     this.hud.inventory(this.state);
     this.hud.tracker(this.state);
   }
@@ -338,6 +531,9 @@ export class Game {
     this.leaveSurface();
     this.space.scene.add(this.ship.root);
     this.hud.show(false);
+    this.hud.race(null);
+    this.hud.air(null);
+    this.hud.status(null);
     setHum(0, false);
     this.refreshTexts();
     this.showOverlay('title');
@@ -368,7 +564,10 @@ export class Game {
   private enterSpace(from: PlanetDef | null): void {
     this.leaveSurface();
     this.mode = 'space';
-    this.ship.params = SPACE_FLIGHT;
+    this.ship.params = this.spaceParams;
+    this.ship.energy = Math.min(this.ship.energy, this.spaceParams.energy);
+    this.hud.air(null);
+    this.hud.status(null);
     this.ship.landed = false;
     this.space.scene.add(this.ship.root);
     this.camera.far = 30000;
@@ -398,13 +597,23 @@ export class Game {
     this.leaveSurface();
     const def = planetById(id);
     const s = this.state;
-    const surf = new Surface(def, { probe: s.quest === 2 && s.accepted && !s.probe });
+    if (this.race.running) this.race.reset();
+    this.hud.race(null);
+    const surf = new Surface(def, {
+      probe: questActive(s, 'p3') && !s.probe,
+      gears: questActive(s, 'b4') ? s.gears : null,
+      sensors: s.sensors,
+      shadows: this.quality !== 'low',
+      shadowSize: this.quality === 'high' ? 1024 : 512,
+    });
+    this.air = 1;
+    this.stormPhase = '';
     this.surface = surf;
     surf.scene.add(this.ship.root, this.beam);
     surf.fx.setViewport(window.innerHeight * this.renderer.getPixelRatio(), this.camera.fov);
     this.camera.far = 1500;
     this.camera.updateProjectionMatrix();
-    this.ship.params = AIR_FLIGHT;
+    this.ship.params = this.airParams;
     if (!s.visited.includes(id)) s.visited.push(id);
     s.where = id;
     if (how === 'fly') {
@@ -462,6 +671,7 @@ export class Game {
   step(dt: number, render = true): void {
     const i = this.input;
     if (this.mode === 'title') {
+      setMusic('title');
       this.menuInput();
       this.titleCamera(dt);
       this.space.update(dt, this.time, this.camera);
@@ -497,12 +707,19 @@ export class Game {
       const focus = this.mode === 'foot' ? this.player.pos : this.ship.pos;
       const res = this.surface.update(this.overlay ? 0 : dt, this.time, this.player.pos, focus, this.camera);
       if (res.geyserLaunch && this.mode === 'foot' && !this.overlay) {
+        if (this.sensorProgress > 0) {
+          this.sensorProgress = 0;
+          this.hud.toast(t('sensorBlown'), 2.5);
+          say(t('sensorBlown'));
+        }
         this.player.vy = 22;
         this.player.onGround = false;
         this.bean.squash(1.4);
         sfx.geyser();
       }
     } else this.space.update(dt, this.time, this.camera);
+    const area: MusicArea = this.race.running ? 'race' : this.surface ? this.surface.def.id : 'space';
+    setMusic(area);
     if (render) this.renderer.render(scene, this.camera);
   }
 
@@ -622,7 +839,17 @@ export class Game {
         );
       }
     }
+    if (this.raceAuto && !this.hyper) {
+      const ring = this.race.rings[this.race.running ? this.race.next : 0];
+      const to = _v.subVectors(ring.pos, s.pos);
+      const aligned = this.steer(to, 3);
+      s.controls.throttle = 1;
+      s.controls.boost = aligned > 0.97 && to.length() > 120;
+      s.controls.slide = false;
+    }
+    this.racePrev.copy(s.pos);
     s.updateFlight(dt);
+    this.raceEvent(this.race.update(dt, this.racePrev, s.pos, s.vel));
     // the sun is too hot to touch
     const ds = s.pos.length();
     if (ds < SUN_RADIUS * 1.5) {
@@ -664,6 +891,42 @@ export class Game {
     setHum(0.3 + s.thrust * 0.7, s.boosting);
     this.chaseCamera(dt);
   }
+
+  private raceEvent(ev: ReturnType<Race['update']>): void {
+    if (this.bumpCooldown > 0) this.bumpCooldown -= 1 / 60;
+    if (this.raceMsg > 0) this.raceMsg -= 1 / 60;
+    const r = this.race;
+    if (ev === 'start') {
+      sfx.ring();
+      this.hud.toast(t('raceStart'), 2);
+      say(t('raceStart'));
+    } else if (ev === 'ring') sfx.ring();
+    else if (ev === 'bump' && this.bumpCooldown <= 0) {
+      this.bumpCooldown = 1;
+      sfx.bump();
+      this.shake = 1.2;
+      this.hud.toast(t('bump'), 1);
+    } else if (ev === 'lost') {
+      this.hud.toast(t('raceLost'), 3);
+      sfx.deny();
+    } else if (ev === 'finish') {
+      const time = Math.round(r.time * 10) / 10;
+      const st = this.state;
+      if (st.raceBest === null || time < st.raceBest) st.raceBest = time;
+      const medal = time <= RACE_MEDALS[0] ? 'medalGold' : time <= RACE_MEDALS[1] ? 'medalSilver' : time <= RACE_MEDALS[2] ? 'medalBronze' : null;
+      const icon = medal === 'medalGold' ? '🥇' : medal === 'medalSilver' ? '🥈' : medal ? '🥉' : '🏁';
+      const msg = medal ? `${icon} ${t(medal)} ${t('raceDone', { t: time.toFixed(1) })}` : t('raceSlow', { t: time.toFixed(1) });
+      this.hud.toast(msg, 5);
+      say(msg);
+      if (medal) sfx.medal();
+      else sfx.quest();
+      this.raceMsg = 6;
+      this.lastRace = `${icon} ${time.toFixed(1)} s<small>${t('best')} ${st.raceBest.toFixed(1)} s</small>`;
+      this.save();
+    }
+  }
+
+  private lastRace = '';
 
   private updateAir(dt: number): void {
     const s = this.ship;
@@ -713,6 +976,7 @@ export class Game {
       }
     }
     if (this.takeoff <= 0 && !this.autoLand) s.updateFlight(dt);
+    if (surf.storm && surf.storm.amount > 0.05 && !this.autoLand && this.takeoff <= 0) s.vel.addScaledVector(surf.storm.wind, surf.storm.amount * 5 * dt);
     // terrain and props
     const g = surf.height(s.pos.x, s.pos.z);
     if (!this.autoLand && this.takeoff <= 0 && s.pos.y < g + 3) {
@@ -769,6 +1033,7 @@ export class Game {
   private startAutoLand(x: number, z: number): void {
     const spot = this.clearSpot(x, z);
     this.autoLand = { x: spot.x, z: spot.z, y: spot.y, phase: 'move' };
+    this.landCam = 0;
     this.autopilot = false;
   }
 
@@ -801,6 +1066,7 @@ export class Game {
       const dy = s.pos.y - L.y;
       s.pos.y -= Math.max(1.5, dy * 1.4) * dt;
       s.thrust = 0.3;
+      this.landCam = Math.min(1, this.landCam + dt * 0.5);
       if (s.pos.y <= L.y + 0.02) {
         s.pos.y = L.y;
         s.quat.copy(_q);
@@ -840,8 +1106,12 @@ export class Game {
     this.footYaw = Math.atan2(_v.x, _v.z);
     this.bean.targetYaw = this.bean.yaw = this.footYaw;
     this.footPitch = 0.35;
-    this.camera.position.set(p.pos.x - Math.sin(this.footYaw) * 7, p.pos.y + 4.5, p.pos.z - Math.cos(this.footYaw) * 7);
+    if (!withEffects) this.camera.position.set(p.pos.x - Math.sin(this.footYaw) * 7, p.pos.y + 4.5, p.pos.z - Math.cos(this.footYaw) * 7);
+    this.air = 1;
+    this.airWarned = false;
     if (withEffects) {
+      // the camera swoops from the landing view down behind the astronaut
+      this.cine = 1.4;
       sfx.land();
       for (let k = 0; k < 18; k++) {
         const a = (k / 18) * Math.PI * 2;
@@ -861,7 +1131,10 @@ export class Game {
     this.mode = 'air';
     this.ship.landed = false;
     this.takeoff = 1.6;
-    this.ship.energy = AIR_FLIGHT.energy;
+    this.ship.energy = this.airParams.energy;
+    this.air = 1;
+    this.hud.air(null);
+    this.hud.status(null);
     this.ship.controls.throttle = 0.3;
     this.camQuat.copy(this.ship.quat);
     sfx.whoosh();
@@ -940,6 +1213,17 @@ export class Game {
     this.camera.quaternion.copy(this.camQuat);
     // look a little above the ship so it sits in the lower third
     this.camera.rotateX(-0.08);
+    // takeoff and landing: swing round to the side and look at the ship
+    const swing = this.takeoff > 0 ? this.takeoff / 1.6 : this.autoLand?.phase === 'down' ? this.landCam : 0;
+    if (swing > 0.001 && this.surface) {
+      const e = swing * swing * (3 - 2 * swing);
+      off.copy(p.model.cameraOffset).applyQuaternion(this.camQuat).applyAxisAngle(UP, e * 1.3);
+      off.y += e * -1.2;
+      this.camera.position.copy(p.pos).add(off);
+      _q.copy(this.camera.quaternion);
+      this.camera.lookAt(p.pos);
+      this.camera.quaternion.slerp(_q, 1 - e);
+    }
     if (this.shake > 0.001) {
       const sh = Math.min(this.shake, 2);
       this.camera.position.add(_v.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(sh * 0.3));
@@ -969,8 +1253,10 @@ export class Game {
     const speed = f.run ? 9.5 : 6;
     const wx = (fx * f.moveY - fz * f.moveX) * speed;
     const wz = (fz * f.moveY + fx * f.moveX) * speed;
-    const k = dampFactor(p.onGround ? 12 : 4, dt);
-    p.vx += (wx - p.vx) * k;
+    // slippery ice: you keep sliding and steer slowly
+    const slip = p.onGround && surf.slippery(p.pos.x, p.pos.z);
+    const k = dampFactor(p.onGround ? (slip ? 0.9 : 12) : 4, dt);
+    p.vx += (wx * (slip ? 1.3 : 1) - p.vx) * k;
     p.vz += (wz - p.vz) * k;
     const grav = 24 * surf.def.gravity;
     if (this.input.pressed('jump') && p.onGround) {
@@ -982,7 +1268,7 @@ export class Game {
     p.jetting = false;
     if (s.jetpack && !p.onGround && f.jumpHeld && p.jetFuel > 0 && p.vy < 7) {
       p.vy += 40 * dt;
-      p.jetFuel = Math.max(0, p.jetFuel - dt / 2.4);
+      p.jetFuel = Math.max(0, p.jetFuel - dt / (s.upgrades.includes('superjet') ? 4.8 : 2.4));
       p.jetting = true;
       if (Math.random() < 0.6) {
         _v.copy(p.pos).add(_v2.set(-Math.sin(this.bean.yaw) * 0.6, 0.3, -Math.cos(this.bean.yaw) * 0.6));
@@ -993,6 +1279,28 @@ export class Game {
     p.pos.x += p.vx * dt;
     p.pos.z += p.vz * dt;
     p.pos.y += p.vy * dt;
+    // sandstorm wind pushes you unless a mesa shelters you
+    let status: string | null = slip ? `⛸ ${t('slippery')}` : null;
+    if (surf.storm) {
+      const st = surf.storm;
+      if (st.phase !== this.stormPhase) {
+        if (this.stormPhase) {
+          const key = st.phase === 'warn' ? 'stormSoon' : st.phase === 'storm' ? 'sandstorm' : 'stormOver';
+          this.hud.toast(t(key), 3.5);
+          say(t(key));
+          if (st.phase !== 'calm') sfx.wind();
+        }
+        this.stormPhase = st.phase;
+      }
+      if (st.amount > 0.3) {
+        if (surf.sheltered(p.pos)) status = `🪨 ${t('sheltered')}`;
+        else {
+          p.pos.addScaledVector(st.wind, st.amount * 4.2 * dt);
+          status = `🌪 ${t('sandstorm')}`;
+        }
+      }
+    }
+    this.hud.status(status);
     surf.collide(p.pos, 0.55, 1.6);
     // the ship stands in the way too
     const sh = this.ship.pos;
@@ -1031,15 +1339,63 @@ export class Game {
     this.hud.jet(s.jetpack && (p.jetFuel < 0.999 || p.jetting), p.jetFuel);
 
     this.interact(dt, f.useHeld, f.scanHeld);
+    this.updateAirMeter(dt);
 
-    // Pip turns to watch you
-    if (surf.pip) {
-      const pip = surf.pip;
-      pip.face(p.pos.x - surf.pipPos.x, p.pos.z - surf.pipPos.z);
-      pip.update(dt, 0, true, 0);
-      pip.pivot.position.y = Math.abs(Math.sin(this.time * 2)) * 0.05;
+    // Pip and Bolt turn to watch you
+    for (const n of surf.npcs) {
+      n.bean.face(p.pos.x - n.pos.x, p.pos.z - n.pos.z);
+      if (n.id === 'pip') n.bean.update(dt, 0, true, 0);
+      n.bean.pivot.position.y = Math.abs(Math.sin(this.time * 2 + (n.id === 'pip' ? 0 : 1))) * 0.05;
     }
     this.footCamera(dt);
+  }
+
+  /** Air on hostile planets: drains on foot, refills by the ship; running out is never game over. */
+  private updateAirMeter(dt: number): void {
+    const surf = this.surface!;
+    const s = this.state;
+    if (!HOSTILE.includes(surf.def.id)) {
+      this.hud.air(null);
+      return;
+    }
+    const p = this.player;
+    const nearShip = Math.hypot(p.pos.x - this.ship.pos.x, p.pos.z - this.ship.pos.z) < 7;
+    if (nearShip) this.air = Math.min(1, this.air + dt * 0.5);
+    else this.air = Math.max(0, this.air - dt / AIR_SECS[s.upgrades.includes('suit') ? 1 : 0]);
+    if (this.air < 0.3 && !this.airWarned) {
+      this.airWarned = true;
+      this.hud.toast(t('airLow'), 3);
+      say(t('airLow'));
+      sfx.lowAir();
+    } else if (this.air > 0.5) this.airWarned = false;
+    this.hud.air(this.air);
+    if (this.air <= 0 && !this.fade) {
+      sfx.deny();
+      this.startFade(
+        t('airOut'),
+        () => {
+          // back beside the ship, a little lighter
+          const lost: string[] = [];
+          for (const r of Object.keys(RES_ICON) as ResourceId[]) {
+            if (s.inv[r] > 0) {
+              s.inv[r] -= 1;
+              lost.push(`1 ${RES_ICON[r]}`);
+            }
+          }
+          this.ship.right(_v);
+          p.pos.copy(this.ship.pos).addScaledVector(_v, 5.5);
+          p.pos.y = surf.groundAt(p.pos.x, p.pos.z, p.pos.y + 4);
+          p.vx = p.vy = p.vz = 0;
+          this.air = 1;
+          this.airWarned = false;
+          this.hud.inventory(s);
+          if (lost.length) this.hud.toast(t('airLost', { x: lost.join(' ') }), 3);
+          this.save();
+        },
+        2.2,
+        '#bfe6ff',
+      );
+    }
   }
 
   private footCamera(dt: number): void {
@@ -1053,7 +1409,8 @@ export class Game {
     const want = _v3.set(target.x - fx * cp * dist, target.y + Math.sin(this.footPitch) * dist, target.z - fz * cp * dist);
     const g = surf.height(want.x, want.z) + 0.8;
     if (want.y < g) want.y = g;
-    this.camera.position.lerp(want, dampFactor(14, dt));
+    if (this.cine > 0) this.cine -= dt;
+    this.camera.position.lerp(want, dampFactor(this.cine > 0 ? 2.5 : 14, dt));
     this.camera.lookAt(target);
     if (Math.abs(this.camera.fov - 65) > 0.05) {
       this.camera.fov += (65 - this.camera.fov) * dampFactor(5, dt);
@@ -1070,9 +1427,44 @@ export class Game {
     let prompt: string | null = null;
     const near = (o: THREE.Vector3, r: number): boolean => Math.hypot(o.x - p.pos.x, o.z - p.pos.z) < r && Math.abs(o.y - p.pos.y) < 3;
     const pressed = this.input.pressed('use');
-    if (surf.pip && near(surf.pipPos, 3.4)) {
+    const npc = surf.npcs.find((n) => near(n.pos, 3.4));
+    const geyser = questActive(s, 'b2') ? surf.geysers.findIndex((g, gi) => !s.sensors.includes(gi) && Math.hypot(g.x - p.pos.x, g.z - p.pos.z) < 2.2) : -1;
+    const gear = surf.gears.find((g) => !g.taken && near(g.group.position, 2.8));
+    if (geyser < 0) this.sensorProgress = 0;
+    if (npc) {
       prompt = `${use}${t('pTalk')}`;
-      if (pressed) return this.talk();
+      if (pressed) return this.talk(npc.id);
+    } else if (surf.bench && near(surf.bench, 3.2)) {
+      prompt = `${use}${t('pBench')} 🔧`;
+      if (pressed) return this.openCraft();
+    } else if (geyser >= 0) {
+      prompt = `${use}${t('pSensor')} 📍`;
+      if (useHeld && !surf.geysers[geyser].erupting) {
+        this.sensorProgress += dt / 1.5;
+        if (Math.random() < dt * 10) sfx.mine();
+        if (this.sensorProgress >= 1) {
+          this.sensorProgress = 0;
+          s.sensors.push(geyser);
+          surf.placeSensor(geyser);
+          sfx.pickup();
+          const msg = t('sensorDone', { n: Math.min(3, s.sensors.length) });
+          this.hud.toast(msg, 2.5);
+          say(msg);
+          this.save();
+        }
+      } else if (!useHeld) this.sensorProgress = Math.max(0, this.sensorProgress - dt);
+    } else if (gear) {
+      prompt = `${use}${t('pGear')} ⚙️`;
+      if (pressed) {
+        gear.taken = true;
+        gear.group.visible = false;
+        if (!s.gears.includes(gear.idx)) s.gears.push(gear.idx);
+        sfx.quest();
+        const msg = t('gotGear', { n: s.gears.length });
+        this.hud.toast(msg, 3);
+        say(msg);
+        this.save();
+      }
     } else if (near(_v.copy(this.ship.pos).setY(this.ship.pos.y - LAND_H), 4.8)) {
       prompt = `${use}${t('pGetIn')}`;
       if (pressed) {
@@ -1192,6 +1584,7 @@ export class Game {
       n.group.visible = false;
       const st = this.state;
       st.inv[n.kind] += n.amount;
+      if (!st.got.includes(n.uid)) st.got.push(n.uid);
       sfx.pickup();
       this.hud.toast(t('gotItem', { n: n.amount, x: `${RES_ICON[n.kind]} ${t(n.kind)}` }), 1.6);
       this.hud.inventory(st, n.kind);
@@ -1201,72 +1594,86 @@ export class Game {
     }
   }
 
-  private talk(): void {
+  private talk(npc: NpcId): void {
     const s = this.state;
-    const q = QUESTS[s.quest];
+    const st = s.npc[npc];
+    const q = currentQuest(s, npc);
     const name = couch?.name || (getLang() === 'no' ? 'venn' : 'friend');
+    const close = { label: t('ok'), action: () => this.closeOverlay() };
     this.hud.prompt(null);
     this.hud.scanRing(this.camera, null);
-    if (!q) {
-      this.dialog(t('pipAllDone'), '', [{ label: t('ok'), action: () => this.closeOverlay() }]);
+    if (!q) return this.dialog(t(`${npc}AllDone`), '', [close], npc);
+    if (!st.acc) {
+      const hello = st.i === 0 ? t(`${npc}Hello`, { name }) + ' ' : '';
+      const blocked = q.blocked?.(s);
+      if (blocked) return this.dialog(hello + t(blocked), '', [close], npc);
+      this.dialog(
+        hello + t(q.offer),
+        `🎁 ${t('reward')}: <b>${t(q.reward)}</b>`,
+        [
+          {
+            label: t('ok'),
+            action: () => {
+              st.acc = true;
+              this.npcReady[npc] = questReady(s, npc);
+              s.target = q.planet;
+              this.hud.tracker(s);
+              this.closeOverlay();
+              this.hud.toast(t('questNew'));
+              sfx.quest();
+              this.save();
+            },
+          },
+        ],
+        npc,
+      );
       return;
     }
-    if (!s.accepted) {
-      const text = (this.hello ? t('pipHello', { name }) + ' ' : '') + t(q.offer);
-      this.hello = false;
-      this.dialog(text, `🎁 ${t('reward')}: <b>${t(q.reward)}</b>`, [
-        {
-          label: t('ok'),
-          action: () => {
-            s.accepted = true;
-            this.wasReady = questReady(s);
-            if (q.title === 'q2Title' || q.title === 'q3Title') s.target = q.title === 'q2Title' ? 'frost' : 'dune';
-            else s.target = 'bloom';
-            this.hud.tracker(s);
-            this.closeOverlay();
-            this.hud.toast(t('questNew'));
-            sfx.quest();
-            this.save();
+    if (questReady(s, npc)) {
+      this.dialog(
+        t(q.thanks),
+        `🎁 <b>${t(q.reward)}</b>`,
+        [
+          {
+            label: t('yay'),
+            action: () => {
+              q.complete(s);
+              st.i += 1;
+              st.acc = false;
+              this.npcReady[npc] = false;
+              sfx.quest();
+              this.applyGear();
+              this.hud.inventory(s);
+              this.hud.tracker(s);
+              this.save();
+              if (s.jetpack && q.id === 'p1') this.hud.toast(t('jetpackHint'), 4);
+              // straight on to the next job
+              const next = currentQuest(s, npc);
+              if (next && !next.blocked?.(s)) this.talk(npc);
+              else this.closeOverlay();
+            },
           },
-        },
-      ]);
-      return;
-    }
-    if (questReady(s)) {
-      this.dialog(t(q.thanks), `🎁 <b>${t(q.reward)}</b>`, [
-        {
-          label: t('yay'),
-          action: () => {
-            q.complete(s);
-            s.quest += 1;
-            s.accepted = false;
-            this.wasReady = false;
-            sfx.quest();
-            this.hud.inventory(s);
-            this.hud.tracker(s);
-            this.save();
-            if (s.jetpack && q.title === 'q1Title') this.hud.toast(t('jetpackHint'), 4);
-            // straight on to the next job
-            if (QUESTS[s.quest]) this.talk();
-            else this.closeOverlay();
-          },
-        },
-      ]);
+        ],
+        npc,
+      );
       return;
     }
     const objs = q.objectives(s).map((o) => `${o.icon} ${t(o.label)} ${o.need > 1 ? `${o.have}/${o.need}` : ''}${o.have >= o.need ? ' ✓' : ''}`).join('<br>');
-    this.dialog(t('pipBusy'), objs, [{ label: t('ok'), action: () => this.closeOverlay() }]);
+    this.dialog(t(`${npc}Busy`), objs, [close], npc);
   }
 
   private checkQuest(): void {
-    const ready = questReady(this.state);
-    if (ready && !this.wasReady) {
-      this.hud.toast(t('questComplete'), 3.5);
-      say(t('questComplete'));
-      sfx.quest();
-      this.state.target = 'pebble';
+    for (const npc of Object.keys(QUESTS) as NpcId[]) {
+      const ready = questReady(this.state, npc);
+      if (ready && !this.npcReady[npc]) {
+        const msg = npc === 'pip' ? t('questComplete') : t('questCompleteBolt');
+        this.hud.toast(msg, 3.5);
+        say(msg);
+        sfx.quest();
+        this.state.target = NPC_HOME[npc];
+      }
+      this.npcReady[npc] = ready;
     }
-    this.wasReady = ready;
   }
 
   // ================================================================== HUD
@@ -1280,6 +1687,8 @@ export class Game {
     const css = (hex: number) => '#' + hex.toString(16).padStart(6, '0');
     this.hud.tracker(s);
     this.hud.inventory(s);
+    if (this.race.running) this.hud.race(`⏱ ${this.race.time.toFixed(1)} s<small>${t('raceRing', { n: this.race.next, m: this.race.count })} · 🥇 ${RACE_MEDALS[0]} s</small>`);
+    else this.hud.race(this.raceMsg > 0 ? this.lastRace : null);
     if (this.mode === 'space' || this.mode === 'air') {
       const ship = this.ship;
       const target = planetById(s.target);
@@ -1299,6 +1708,13 @@ export class Game {
           });
         }
         tgt += ` · ${((ship.pos.distanceTo(target.pos) - target.radius) / 1000).toFixed(1)} km`;
+        // the ring race: the next ring, or the start ring when you are near Pebble
+        const r = this.race;
+        const ring = r.rings[r.running ? r.next : 0];
+        const d = ring.pos.distanceTo(ship.pos);
+        if (r.running || d < 1400 || questActive(s, 'b3')) {
+          markers.push({ pos: ring.pos.clone().add(_v.set(0, RING_R + 8, 0)), label: r.running ? `${r.next + 1}/${r.count}` : `🏁 ${t('race')}`, sub: `${Math.round(d)} m`, color: '#ffd23f', target: r.running });
+        }
       } else {
         const surf = this.surface!;
         alt = ship.pos.y - surf.height(ship.pos.x, ship.pos.z);
@@ -1343,7 +1759,15 @@ export class Game {
       this.hud.flight(false);
       this.hud.reticle(false);
       if (this.ship.pos.distanceTo(this.player.pos) > 14) markers.push({ pos: _v.copy(this.ship.pos).setY(this.ship.pos.y + 3).clone(), label: '🚀', color: '#ff5d73' });
-      if (surf.pip && surf.pipPos.distanceTo(this.player.pos) > 6) markers.push({ pos: surf.pipPos.clone().setY(surf.pipPos.y + 3.2), label: t('pipName'), sub: '💬', color: '#ff8c42', target: !s.accepted || questReady(s) });
+      for (const n of surf.npcs) {
+        const q = currentQuest(s, n.id);
+        if (n.pos.distanceTo(this.player.pos) > 6) markers.push({ pos: n.pos.clone().setY(n.pos.y + 3.2), label: t(`${n.id}Name`), sub: '💬', color: n.id === 'pip' ? '#ff8c42' : '#3ddc97', target: !!q && (!s.npc[n.id].acc || questReady(s, n.id)) && !q.blocked?.(s) });
+      }
+      if (surf.bench && surf.bench.distanceTo(this.player.pos) > 5 && surf.bench.distanceTo(this.player.pos) < 40) markers.push({ pos: surf.bench.clone().setY(surf.bench.y + 2.6), label: '🔧', color: '#ffc93c' });
+      for (const g of surf.gears) if (!g.taken) markers.push({ pos: g.group.position.clone().setY(g.group.position.y + 2.2), label: '⚙️', sub: `${Math.round(g.group.position.distanceTo(this.player.pos))} m`, color: '#ffd23f', target: true });
+      if (questActive(s, 'b2')) surf.geysers.forEach((g, gi) => {
+        if (!s.sensors.includes(gi)) markers.push({ pos: new THREE.Vector3(g.x, g.y + 2.5, g.z), label: '📍', sub: `${Math.round(Math.hypot(g.x - this.player.pos.x, g.z - this.player.pos.z))} m`, color: '#3ddc97' });
+      });
       if (surf.probe && !surf.probe.taken) markers.push({ pos: surf.probe.group.position.clone().setY(surf.probe.group.position.y + 2), label: '📡', sub: `${Math.round(surf.probe.group.position.distanceTo(this.player.pos))} m`, color: '#ff5d73', target: true });
       const rows: [string, string][] =
         dev === 'gamepad'
@@ -1382,9 +1806,25 @@ export class Game {
         pos: (this.mode === 'foot' ? this.player.pos : this.ship.pos).toArray().map((x) => Math.round(x)),
         inv: { ...this.state.inv },
         finds: [...this.state.finds],
-        quest: this.state.quest,
-        accepted: this.state.accepted,
+        quest: this.state.npc.pip.i,
+        accepted: this.state.npc.pip.acc,
         ready: questReady(this.state),
+        bolt: { ...this.state.npc.bolt, ready: questReady(this.state, 'bolt') },
+        air: Math.round(this.air * 100) / 100,
+        storm: this.surface?.storm ? { phase: this.surface.storm.phase, amount: Math.round(this.surface.storm.amount * 100) / 100, sheltered: this.surface.sheltered(this.player.pos), fogFar: Math.round((this.surface.scene.fog as THREE.Fog).far) } : null,
+        upgrades: [...this.state.upgrades],
+        plans: [...this.state.plans],
+        paint: this.state.paint,
+        hat: this.state.hat,
+        sensors: [...this.state.sensors],
+        gears: [...this.state.gears],
+        got: this.state.got.length,
+        raceBest: this.state.raceBest,
+        race: { running: this.race.running, next: this.race.next, time: Math.round(this.race.time * 10) / 10 },
+        energy: Math.round(this.ship.params.energy),
+        slippery: !!this.surface?.slippery(this.player.pos.x, this.player.pos.z),
+        nodes: this.surface?.resources.length ?? 0,
+        overlayVisible: OVERLAYS.filter((o) => $(o).classList.contains('visible')),
         autopilot: this.autopilot,
         fading: !!this.fade,
         landed: this.ship.landed,
@@ -1398,8 +1838,19 @@ export class Game {
         if (!surf || this.mode !== 'foot') return false;
         let pos: THREE.Vector3 | null = null;
         let dist = 3;
-        if (what === 'pip') pos = surf.pipPos;
-        else if (what === 'ship') {
+        const npc = surf.npcs.find((n) => n.id === what);
+        if (npc) pos = npc.pos;
+        else if (what === 'bench') pos = surf.bench;
+        else if (what === 'gear') pos = surf.gears.find((g) => !g.taken)?.group.position ?? null;
+        else if (what === 'geyser') {
+          const g = surf.geysers.find((_g, gi) => !this.state.sensors.includes(gi));
+          pos = g ? new THREE.Vector3(g.x, g.y, g.z) : null;
+          dist = 1.2;
+        } else if (what === 'ice-patch') {
+          const ip = surf.icePatches[0];
+          pos = ip ? new THREE.Vector3(ip.x, 0, ip.z) : null;
+          dist = 0.5;
+        } else if (what === 'ship') {
           pos = this.ship.pos.clone();
           dist = 3.6;
         } else if (what === 'probe') pos = surf.probe?.group.position ?? null;
@@ -1443,6 +1894,46 @@ export class Game {
       setTarget: (id: PlanetId) => {
         this.state.target = id;
       },
+      setAir: (x: number) => {
+        this.air = x;
+      },
+      storm: () => this.surface?.forceStorm(),
+      /** Stands the astronaut downwind of the biggest mesa (or upwind with exposed = true). */
+      mesa: (exposed = false) => {
+        const surf = this.surface;
+        if (!surf?.storm || !surf.mesas.length) return false;
+        const m = [...surf.mesas].sort((a, b) => b.r - a.r)[0];
+        const w = surf.storm.wind;
+        const k = exposed ? -(m.r + 6) : m.r + 3;
+        this.player.pos.set(m.x + w.x * k, 0, m.z + w.z * k);
+        this.player.pos.y = surf.groundAt(this.player.pos.x, this.player.pos.z, 500);
+        this.player.vx = this.player.vz = this.player.vy = 0;
+        return true;
+      },
+      geyser: () => {
+        const g = this.surface?.geysers.find((_g, gi) => !this.state.sensors.includes(gi));
+        return g ? { erupting: g.erupting, timer: g.timer } : null;
+      },
+      give: (r: ResourceId, n: number) => {
+        this.state.inv[r] += n;
+        this.hud.inventory(this.state);
+      },
+      useItem: (key: string) => this.useItem(key),
+      /** Puts the ship in space just before the race's start ring, facing it. */
+      raceStart: () => {
+        if (this.mode !== 'space') return false;
+        const r0 = this.race.rings[0];
+        const p = r0.pos.clone().addScaledVector(r0.normal, -160);
+        this.ship.placeAt(p, r0.pos, 120);
+        this.camQuat.copy(this.ship.quat);
+        this.race.reset();
+        return true;
+      },
+      raceAuto: (on: boolean) => {
+        this.raceAuto = on;
+      },
+      thumbs: () => Object.keys(thumbnails(this.renderer)).length,
+      bean: () => this.bean.group.position.toArray(),
       charHeight: CHAR_HEIGHT * BEAN_SCALE,
       setSpeed: (n: number) => {
         this.substeps = Math.max(1, Math.round(n));

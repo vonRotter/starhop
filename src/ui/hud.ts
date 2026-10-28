@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { t } from '../core/i18n';
-import { QUESTS, questReady, type GameState } from '../game/state';
+import { NPC_HOME, QUESTS, currentQuest, questReady, type GameState, type NpcId } from '../game/state';
 import type { ResourceId } from '../game/planets';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -65,21 +65,52 @@ export class Hud {
   }
 
   tracker(s: GameState): void {
-    const q = QUESTS[s.quest];
-    let html: string;
-    if (!q) html = `<h4>★</h4><div class="obj">${t('allQuestsDone')}</div>`;
-    else if (!s.accepted) html = `<h4>${t('questNew')}</h4><div class="obj">💬 ${t('talkToPip')}</div>`;
-    else {
-      html = `<h4>${t(q.title)}</h4>`;
+    let html = '';
+    const npcs = Object.keys(QUESTS) as NpcId[];
+    for (const npc of npcs) {
+      const q = currentQuest(s, npc);
+      if (!q || !s.npc[npc].acc) continue;
+      html += `<h4>${t(q.title)}</h4>`;
       for (const o of q.objectives(s)) {
         const done = o.have >= o.need;
         html += `<div class="obj${done ? ' done' : ''}">${o.icon} ${t(o.label)} ${o.need > 1 ? `${o.have}/${o.need}` : ''} ${done ? '✓' : ''}</div>`;
       }
-      if (questReady(s)) html += `<div class="obj ready">💬 ${t('oReturn')}</div>`;
+      if (questReady(s, npc)) html += `<div class="obj ready">💬 ${npc === 'pip' ? t('oReturn') : `${t('boltName')} · ${t(NPC_HOME.bolt)}`}</div>`;
+    }
+    if (!html) {
+      // nothing accepted: point at whoever has a job
+      if (currentQuest(s, 'pip')) html = `<h4>${t('questNew')}</h4><div class="obj">💬 ${t('talkToPip')}</div>`;
+      else if (currentQuest(s, 'bolt') && s.visited.includes('bloom')) html = `<h4>${t('questNew')}</h4><div class="obj">💬 ${t('talkToBolt')}</div>`;
+      else if (!currentQuest(s, 'bolt')) html = `<h4>★</h4><div class="obj">${t('allQuestsDone')}</div>`;
+      else html = `<h4>${t('questNew')}</h4><div class="obj">💬 ${t('talkToBolt')}</div>`;
     }
     if (html === this.lastTracker) return;
     this.lastTracker = html;
     $('tracker').innerHTML = html;
+  }
+
+  /** The air meter on hostile planets (null hides it). */
+  air(frac: number | null): void {
+    const el = $('air');
+    el.classList.toggle('on', frac !== null);
+    if (frac === null) return;
+    el.classList.toggle('low', frac < 0.3);
+    $('air-fill').style.width = `${Math.round(frac * 100)}%`;
+    $('air-l').textContent = `🫧 ${t('air')}`;
+  }
+
+  /** Race clock and ring count (null hides it). */
+  race(text: string | null): void {
+    const el = $('race');
+    el.classList.toggle('on', !!text);
+    if (text && el.innerHTML !== text) el.innerHTML = text;
+  }
+
+  /** A small status pill under the tracker (shelter, slippery ice). */
+  status(text: string | null): void {
+    const el = $('status');
+    el.classList.toggle('on', !!text);
+    if (text && el.textContent !== text) el.textContent = text;
   }
 
   flight(on: boolean, speed = 0, boost = 0, alt: number | null = null, target = '', auto = false): void {
