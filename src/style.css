@@ -209,10 +209,12 @@ button:disabled { opacity: 0.4; }
 .res { display: flex; gap: 10px; }
 .res .find { flex: 1; }
 #c-inv { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
-#c-body h3 { margin: 10px 0 6px; font-size: 20px; }
-.items { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.items button { border-radius: 18px; font-size: 17px; padding: 8px 10px; line-height: 1.25; }
-.items button .ic { font-size: 28px; display: block; }
+#c-body h3 { margin: 8px 0 4px; font-size: 19px; }
+#craft .panel h2 { margin-bottom: 4px; }
+#status.warn { background: var(--coral); color: #fff; }
+.items { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.items button { border-radius: 16px; font-size: 16px; padding: 6px 8px; line-height: 1.2; }
+.items button .ic { font-size: 24px; display: block; }
 .items button .sw { display: inline-block; width: 26px; height: 26px; border-radius: 50%; border: 3px solid var(--ink); }
 .items button small { display: block; font-size: 14px; opacity: 0.8; }
 .items button.have { background: #e9fff4; }

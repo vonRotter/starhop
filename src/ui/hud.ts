@@ -110,7 +110,11 @@ export class Hud {
   status(text: string | null): void {
     const el = $('status');
     el.classList.toggle('on', !!text);
-    if (text && el.textContent !== text) el.textContent = text;
+    // a leading "!" marks a warning
+    const warn = !!text && text.startsWith('!');
+    el.classList.toggle('warn', warn);
+    const shown = warn ? text!.slice(1) : text;
+    if (shown && el.textContent !== shown) el.textContent = shown;
   }
 
   flight(on: boolean, speed = 0, boost = 0, alt: number | null = null, target = '', auto = false): void {

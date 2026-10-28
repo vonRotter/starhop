@@ -702,6 +702,7 @@ export class Game {
       }
     }
     this.hud.update(dt);
+    if (this.raceMsg > 0) this.raceMsg -= dt;
     this.updateHud();
     const scene = this.surface ? this.surface.scene : this.space.scene;
     if (this.surface) {
@@ -895,7 +896,6 @@ export class Game {
 
   private raceEvent(ev: ReturnType<Race['update']>): void {
     if (this.bumpCooldown > 0) this.bumpCooldown -= 1 / 60;
-    if (this.raceMsg > 0) this.raceMsg -= 1 / 60;
     const r = this.race;
     if (ev === 'start') {
       sfx.ring();
@@ -1297,7 +1297,7 @@ export class Game {
         if (surf.sheltered(p.pos)) status = `🪨 ${t('sheltered')}`;
         else {
           p.pos.addScaledVector(st.wind, st.amount * 4.2 * dt);
-          status = `🌪 ${t('sandstorm')}`;
+          status = `!🌪 ${t('sandstorm')}`;
         }
       }
     }
@@ -1766,9 +1766,16 @@ export class Game {
       }
       if (surf.bench && surf.bench.distanceTo(this.player.pos) > 5 && surf.bench.distanceTo(this.player.pos) < 40) markers.push({ pos: surf.bench.clone().setY(surf.bench.y + 2.6), label: '🔧', color: '#ffc93c' });
       for (const g of surf.gears) if (!g.taken) markers.push({ pos: g.group.position.clone().setY(g.group.position.y + 2.2), label: '⚙️', sub: `${Math.round(g.group.position.distanceTo(this.player.pos))} m`, color: '#ffd23f', target: true });
-      if (questActive(s, 'b2')) surf.geysers.forEach((g, gi) => {
-        if (!s.sensors.includes(gi)) markers.push({ pos: new THREE.Vector3(g.x, g.y + 2.5, g.z), label: '📍', sub: `${Math.round(Math.hypot(g.x - this.player.pos.x, g.z - this.player.pos.z))} m`, color: '#3ddc97' });
-      });
+      if (questActive(s, 'b2')) {
+        // the three nearest geysers without a sensor
+        const pp = this.player.pos;
+        surf.geysers
+          .map((g, gi) => ({ g, gi, d: Math.hypot(g.x - pp.x, g.z - pp.z) }))
+          .filter((x) => !s.sensors.includes(x.gi))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, 3)
+          .forEach(({ g, d }) => markers.push({ pos: new THREE.Vector3(g.x, g.y + 2.5, g.z), label: '📍', sub: `${Math.round(d)} m`, color: '#3ddc97' }));
+      }
       if (surf.probe && !surf.probe.taken) markers.push({ pos: surf.probe.group.position.clone().setY(surf.probe.group.position.y + 2), label: '📡', sub: `${Math.round(surf.probe.group.position.distanceTo(this.player.pos))} m`, color: '#ff5d73', target: true });
       const rows: [string, string][] =
         dev === 'gamepad'

@@ -10,11 +10,6 @@ the flight feel of [Tachyon](https://github.com/vonRotter/tachyon) and the look 
 Live build: **https://vonrotter.github.io/starhop/** (GitHub Actions deploys `dist` on every push
 to `main`; Pages must use **Settings → Pages → Source: GitHub Actions**).
 
-## Milestone 2 (in progress)
-
-A second NPC, more quests, crafting at a workbench, hazards, a ring race, a picture log, music
-and an options screen.
-
 ## The star system
 
 - **Pebble**: the lilac home world with Pip's outpost and the landing pad.
@@ -23,8 +18,30 @@ and an options screen.
 - **Dune**: sand, mesas and crystals, hidden behind a space storm. Needs the hyperdrive.
 
 Quests from Pip: scan 3 kinds of creatures and bring 3 star fruit (reward: jetpack), bring 5 ice
-(reward: hyperdrive; a jump costs 1 crystal), find the lost probe on Dune (reward: super scanner).
-The quest log (J / View) also has the discovery log and your gear.
+(reward: hyperdrive; a jump costs 1 crystal), find the lost probe on Dune (reward: super scanner),
+and a star party with 4 star fruit and 4 ice (reward: golden crown and gold paint).
+
+**Bolt** the mechanic camps by his crashed ship on Bloom: bring 3 crystals and 2 star fruit (plans
+for a boost upgrade), put sensors on 3 Frost geysers between bursts (plans for an air suit), win a
+medal in the ring race around Pebble (plans for a big energy tank), and, once you have the
+hyperdrive, find his 3 gears on Dune (super jetpack and his hard hat).
+
+The **workbench** in Pip's outpost turns resources into upgrades (boost, energy tank, air suit; each
+needs Bolt's plans), ship paint (💎1 🧊1) and hats (⭐2: party hat, flower, propeller cap). Owned
+paint and hats can be swapped there for free.
+
+Hazards are gentle: on Frost and Dune an air meter runs down while you walk and refills by the
+ship (the air suit doubles it); running out just puts you back at the ship and drops one of each
+resource. Frost has slippery ice patches and geysers that rumble before they blow. Dune has
+sandstorms every minute or so: the view closes in and the wind pushes you, unless you shelter on
+the far side of a mesa. In space, the **ring race** loops around Pebble through an asteroid belt
+(fly through the first ring to start; 🥇 38 s, 🥈 52 s, 🥉 75 s).
+
+The quest log (J / View) has the quests, a discovery log with pictures of every creature, plant
+and resource (unknown ones as shadows), a planet page with three stars each (scan all, collect
+all, all quests) and your gear. **Options** (title or pause menu): invert up/down, mouse and stick
+speed, graphics (high, medium, low: no shadows and a lower resolution) and music. Each area has
+its own little synthesized music loop.
 
 ## Controls
 
@@ -39,7 +56,7 @@ The quest log (J / View) also has the discovery log and your gear.
 | Hyperjump (with hyperdrive) | H | RB |
 | **Walk** / look | WASD / arrows or mouse | left stick / right stick |
 | Jump (hold in the air: jetpack) | Space | A |
-| Use, talk, get in, collect (hold) | E | X |
+| Use, talk, get in, collect, workbench (hold for sensors) | E | X |
 | Scan (hold) | F or right mouse | RT / LT |
 | Quest log / pause / read aloud | J / Esc / V | View or Y / Start |
 
@@ -64,8 +81,11 @@ npm test           # scripted Playwright play-through (needs a build and Chromiu
 The play-through (`tests/playthrough.mjs`) runs against `npx vite preview --port 4173`: new game
 with a Couch profile, quest 1 (scan, gather, autopilot to Bloom and back, land, hand in),
 reload and Continue, quest log, Norwegian, a fake gamepad, and with `FULL=1` also quests 2 and 3
-(jetpack, hyperjump, the probe). It fails on any console error or warning. `tests/planets.mjs`
-takes screenshots of every planet. Set `CHROME` to the Chromium binary if it is not at
+(jetpack, hyperjump, the probe). Then milestone 2 in a second profile: a milestone-1 save continues
+(save migration), options, Bolt's four quests, crafting, geyser sensors, ice, running out of air,
+the ring race, gears and a sandstorm with shelter, Pip's star party, log pictures and a reload.
+`ONLY_M2=1` runs just that part, `SKIP_M2=1` leaves it out. It fails on any console error or
+warning. `tests/planets.mjs` takes screenshots of every planet. Set `CHROME` to the Chromium binary if it is not at
 `/opt/pw-browsers/...`.
 
 Built with three.js and TypeScript (Vite). All code and models were written by Claude
