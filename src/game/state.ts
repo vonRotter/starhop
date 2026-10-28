@@ -305,7 +305,7 @@ export const QUESTS: Record<NpcId, QuestDef[]> = {
 };
 
 /** Gold, silver and bronze times for the ring race (seconds). */
-export const RACE_MEDALS = [34, 46, 70];
+export const RACE_MEDALS = [38, 52, 75];
 
 export const currentQuest = (s: GameState, npc: NpcId): QuestDef | undefined => QUESTS[npc][s.npc[npc].i];
 

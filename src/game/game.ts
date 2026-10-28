@@ -680,8 +680,9 @@ export class Game {
     }
     if (i.pressed('voice')) this.toggleVoice();
     if (this.overlay) {
+      const was = this.overlay;
       this.menuInput();
-      if (i.pressed('pause') && this.overlay === 'pause') this.closeOverlay();
+      if (i.pressed('pause') && was === 'pause' && this.overlay === 'pause') this.closeOverlay();
     } else {
       if (i.pressed('pause')) {
         this.showOverlay('pause');
@@ -1649,7 +1650,7 @@ export class Game {
               if (s.jetpack && q.id === 'p1') this.hud.toast(t('jetpackHint'), 4);
               // straight on to the next job
               const next = currentQuest(s, npc);
-              if (next && !next.blocked?.(s)) this.talk(npc);
+              if (next) this.talk(npc);
               else this.closeOverlay();
             },
           },
@@ -1841,7 +1842,10 @@ export class Game {
         const npc = surf.npcs.find((n) => n.id === what);
         if (npc) pos = npc.pos;
         else if (what === 'bench') pos = surf.bench;
-        else if (what === 'gear') pos = surf.gears.find((g) => !g.taken)?.group.position ?? null;
+        else if (what === 'gear') {
+          pos = surf.gears.find((g) => !g.taken)?.group.position ?? null;
+          dist = 1.6;
+        }
         else if (what === 'geyser') {
           const g = surf.geysers.find((_g, gi) => !this.state.sensors.includes(gi));
           pos = g ? new THREE.Vector3(g.x, g.y, g.z) : null;
@@ -1912,13 +1916,20 @@ export class Game {
       },
       geyser: () => {
         const g = this.surface?.geysers.find((_g, gi) => !this.state.sensors.includes(gi));
-        return g ? { erupting: g.erupting, timer: g.timer } : null;
+        return g ? { erupting: g.erupting, timer: g.timer, x: g.x, y: g.y, z: g.z } : null;
       },
       give: (r: ResourceId, n: number) => {
         this.state.inv[r] += n;
         this.hud.inventory(this.state);
       },
       useItem: (key: string) => this.useItem(key),
+      /** Test setup: overwrite one top-level save field. */
+      set: (key: string, value: unknown) => {
+        (this.state as unknown as Record<string, unknown>)[key] = value;
+        for (const n of Object.keys(this.npcReady) as NpcId[]) this.npcReady[n] = questReady(this.state, n);
+        this.hud.inventory(this.state);
+      },
+      quality: () => ({ q: this.quality, shadows: this.renderer.shadowMap.enabled, ratio: this.renderer.getPixelRatio() }),
       /** Puts the ship in space just before the race's start ring, facing it. */
       raceStart: () => {
         if (this.mode !== 'space') return false;
