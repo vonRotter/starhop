@@ -602,7 +602,7 @@ export class Surface {
       this.add(crate, x, z, this.height(x, z) + 0.7);
     }
     this.colliders.push({ x: cx + 2.5, z: cz - 4, r: 2.4, top: cy + 1.4, bottom: cy - 2 });
-    const bolt = new Bean(COLORS.mint, { hat: 'hardhat' });
+    const bolt = new Bean(COLORS.mint, { hat: 'welder' });
     bolt.group.scale.setScalar(1.45);
     const bp = new THREE.Vector3(cx, cy, cz);
     bolt.group.position.copy(bp);

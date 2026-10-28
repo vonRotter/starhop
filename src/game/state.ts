@@ -8,7 +8,10 @@ export const NPC_HOME: Record<NpcId, PlanetId> = { pip: 'pebble', bolt: 'bloom' 
 
 export type UpgradeId = 'boost' | 'tank' | 'suit' | 'superjet';
 export type PaintId = 'coral' | 'sky' | 'mint' | 'grape' | 'sun' | 'gold';
-export type HatId = 'none' | 'party' | 'flower' | 'propeller' | 'hardhat' | 'crown';
+export type HatId = 'none' | 'antenna' | 'visor' | 'radar' | 'welder' | 'halo';
+
+/** Hat ids before the gear became science fiction (milestone 2 saves). */
+const OLD_HATS: Record<string, HatId> = { party: 'antenna', flower: 'visor', propeller: 'radar', hardhat: 'welder', crown: 'halo' };
 
 export interface GameState {
   v: 2;
@@ -86,6 +89,9 @@ export function migrate(raw: Record<string, unknown>): GameState | null {
   }
   if (raw.v !== 2) return null;
   const s = raw as Partial<GameState>;
+  // Old hat ids (party hat, crown...) become their science-fiction replacements.
+  if (Array.isArray(s.hats)) s.hats = [...new Set(s.hats.map((h) => OLD_HATS[h] ?? h))] as HatId[];
+  if (s.hat && OLD_HATS[s.hat]) s.hat = OLD_HATS[s.hat];
   return {
     ...base,
     ...s,
@@ -227,7 +233,7 @@ export const QUESTS: Record<NpcId, QuestDef[]> = {
       title: 'q4Title',
       offer: 'pipQ4',
       thanks: 'pipThanks4',
-      reward: 'rewardCrown',
+      reward: 'rewardHalo',
       objectives: (s) => [
         { icon: '⭐', label: 'oFruit', have: have(s, 'fruit', 4), need: 4 },
         { icon: '🧊', label: 'oIce', have: have(s, 'ice', 4), need: 4 },
@@ -235,9 +241,9 @@ export const QUESTS: Record<NpcId, QuestDef[]> = {
       complete: (s) => {
         take(s, 'fruit', 4);
         take(s, 'ice', 4);
-        if (!s.hats.includes('crown')) s.hats.push('crown');
+        if (!s.hats.includes('halo')) s.hats.push('halo');
         if (!s.paints.includes('gold')) s.paints.push('gold');
-        s.hat = 'crown';
+        s.hat = 'halo';
       },
     },
   ],
@@ -298,7 +304,7 @@ export const QUESTS: Record<NpcId, QuestDef[]> = {
       objectives: (s) => [{ icon: '⚙️', label: 'oGears', have: Math.min(3, s.gears.length), need: 3 }],
       complete: (s) => {
         if (!s.upgrades.includes('superjet')) s.upgrades.push('superjet');
-        if (!s.hats.includes('hardhat')) s.hats.push('hardhat');
+        if (!s.hats.includes('welder')) s.hats.push('welder');
       },
     },
   ],
@@ -360,9 +366,9 @@ export const RECIPES: Recipe[] = [
   { id: 'mint', kind: 'paint', icon: '🎨', cost: { crystal: 1, ice: 1 } },
   { id: 'grape', kind: 'paint', icon: '🎨', cost: { crystal: 1, ice: 1 } },
   { id: 'sun', kind: 'paint', icon: '🎨', cost: { crystal: 1, ice: 1 } },
-  { id: 'party', kind: 'hat', icon: '🥳', cost: { fruit: 2 } },
-  { id: 'flower', kind: 'hat', icon: '🌼', cost: { fruit: 2 } },
-  { id: 'propeller', kind: 'hat', icon: '🧢', cost: { fruit: 2 } },
+  { id: 'antenna', kind: 'hat', icon: '📡', cost: { fruit: 2 } },
+  { id: 'visor', kind: 'hat', icon: '🥽', cost: { fruit: 2 } },
+  { id: 'radar', kind: 'hat', icon: '🛰️', cost: { fruit: 2 } },
 ];
 
 export function owns(s: GameState, kind: ItemKind, id: string): boolean {

@@ -19,15 +19,15 @@ to `main`; Pages must use **Settings → Pages → Source: GitHub Actions**).
 
 Quests from Pip: scan 3 kinds of creatures and bring 3 star fruit (reward: jetpack), bring 5 ice
 (reward: hyperdrive; a jump costs 1 crystal), find the lost probe on Dune (reward: super scanner),
-and a star party with 4 star fruit and 4 ice (reward: golden crown and gold paint).
+and a star party with 4 star fruit and 4 ice (reward: an orbit ring and gold paint).
 
 **Bolt** the mechanic camps by his crashed ship on Bloom: bring 3 crystals and 2 star fruit (plans
 for a boost upgrade), put sensors on 3 Frost geysers between bursts (plans for an air suit), win a
 medal in the ring race around Pebble (plans for a big energy tank), and, once you have the
-hyperdrive, find his 3 gears on Dune (super jetpack and his hard hat).
+hyperdrive, find his 3 gears on Dune (super jetpack and his welding visor).
 
 The **workbench** in Pip's outpost turns resources into upgrades (boost, energy tank, air suit; each
-needs Bolt's plans), ship paint (💎1 🧊1) and hats (⭐2: party hat, flower, propeller cap). Owned
+needs Bolt's plans), ship paint (💎1 🧊1) and helmet gear (⭐2: antenna headset, holo visor, radar dish). Owned
 paint and hats can be swapped there for free.
 
 Hazards are gentle: on Frost and Dune an air meter runs down while you walk and refills by the

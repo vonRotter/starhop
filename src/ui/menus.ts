@@ -124,7 +124,7 @@ export function renderCraft(s: GameState, paintCss: (id: string) => string): str
   html += `</div><h3>${t('benchHats')}</h3><div class="items">`;
   html += btn('hat', 'none', '🙂');
   for (const r of RECIPES.filter((x) => x.kind === 'hat')) html += btn('hat', r.id, r.icon, r);
-  if (s.hats.includes('hardhat')) html += btn('hat', 'hardhat', '⛑️');
-  if (s.hats.includes('crown')) html += btn('hat', 'crown', '👑');
+  if (s.hats.includes('welder')) html += btn('hat', 'welder', '🔧');
+  if (s.hats.includes('halo')) html += btn('hat', 'halo', '💫');
   return html + '</div>';
 }

@@ -375,11 +375,11 @@ try {
     const e0 = (await info()).energy;
     await page.click('#c-body button[data-item="upgrade:boost"]');
     await page.click('#c-body button[data-item="paint:sky"]');
-    await page.click('#c-body button[data-item="hat:party"]');
+    await page.click('#c-body button[data-item="hat:antenna"]');
     await page.click('#c-body button[data-item="upgrade:tank"]'); // no plan yet: refused
     await snap('workbench');
     i = await info();
-    if (!i.upgrades.includes('boost') || i.upgrades.includes('tank') || i.paint !== 'sky' || i.hat !== 'party') throw new Error(`crafting failed: ${JSON.stringify(i)}`);
+    if (!i.upgrades.includes('boost') || i.upgrades.includes('tank') || i.paint !== 'sky' || i.hat !== 'antenna') throw new Error(`crafting failed: ${JSON.stringify(i)}`);
     console.log('  energy', e0, '->', i.energy, 'inv', JSON.stringify(i.inv));
     await page.click('#c-close');
     await page.waitForTimeout(300);
@@ -539,11 +539,11 @@ try {
     await waitFor((i) => i.ready, 'party quest ready', 5000);
     await talkTo('pip');
     i = await info();
-    if (i.quest !== 4 || i.hat !== 'crown') throw new Error(`Pip quest 4 not done: ${JSON.stringify(i)}`);
+    if (i.quest !== 4 || i.hat !== 'halo') throw new Error(`Pip quest 4 not done: ${JSON.stringify(i)}`);
     await sh('useItem', 'paint:gold');
     await sh('goNear', 'ship');
     await page.waitForTimeout(300);
-    await snap('crown-gold');
+    await snap('halo-gold');
 
     step('discovery log pictures and planet stars');
     await page.keyboard.press('KeyJ');
@@ -568,7 +568,7 @@ try {
     await page.waitForTimeout(1200);
     await page.click('#t-continue');
     i = await waitFor((i) => i.mode === 'foot', 'continue');
-    if (i.paint !== 'gold' || i.hat !== 'crown' || !i.upgrades.includes('boost') || i.bolt.i !== 4 || i.sensors.length !== 3) throw new Error(`milestone-2 save lost: ${JSON.stringify(i)}`);
+    if (i.paint !== 'gold' || i.hat !== 'halo' || !i.upgrades.includes('boost') || i.bolt.i !== 4 || i.sensors.length !== 3) throw new Error(`milestone-2 save lost: ${JSON.stringify(i)}`);
     await page.keyboard.press('Escape');
     await page.click('#p-no');
     await page.click('#p-resume');

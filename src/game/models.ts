@@ -158,57 +158,66 @@ export class Bean {
   }
 }
 
-/** Hats from Couch Party Island (party cone, flower, propeller cap, hard hat, crown). Base at y = 0. */
+/** Helmet gear (science fiction: antenna headset, holo visor, radar dish, welding visor, orbit ring). Base at y = 0. */
 export function makeHat(id: HatId): { group: THREE.Group; prop: THREE.Group | null } {
   const g = new THREE.Group();
   let prop: THREE.Group | null = null;
+  const glow = (c: number, e: number) => toon(c, { emissive: e });
   switch (id) {
-    case 'party': {
-      const cone = mesh(sharedGeo('hatCone', () => new THREE.ConeGeometry(0.22, 0.5, 16).translate(0, 0.25, 0)), toon(COLORS.candyPink));
-      const band = mesh(sharedGeo('hatConeBand', () => new THREE.TorusGeometry(0.2, 0.04, 6, 18)), toon(COLORS.candyYellow), 0, 0.05, 0);
+    case 'antenna': {
+      // A headband with two springy antennas and glowing tips.
+      const band = mesh(sharedGeo('antBand', () => new THREE.TorusGeometry(0.24, 0.035, 6, 20)), toon(COLORS.ink), 0, 0.02, 0);
       band.rotation.x = Math.PI / 2;
-      const pom = mesh(sphereGeo(0.08), toon(COLORS.candyYellow), 0, 0.52, 0);
-      g.add(cone, band, pom);
-      g.rotation.z = 0.15;
-      break;
-    }
-    case 'flower': {
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const petal = mesh(sphereGeo(0.1, 10, 8), toon(i % 2 ? COLORS.white : COLORS.candyPink), Math.cos(a) * 0.14, 0.05, Math.sin(a) * 0.14);
-        petal.scale.set(1, 0.45, 1);
-        g.add(petal);
+      g.add(band);
+      for (const sx of [-1, 1]) {
+        const stalk = mesh(sharedGeo('antStalk', () => new THREE.CylinderGeometry(0.018, 0.018, 0.34, 6).translate(0, 0.17, 0)), toon(0xc8d0e0), sx * 0.13, 0.02, 0);
+        stalk.rotation.z = -sx * 0.35;
+        g.add(stalk);
+        g.add(mesh(sphereGeo(0.055, 10, 8), glow(COLORS.mint, 0x0c5a3c), sx * 0.25, 0.33, 0));
       }
-      g.add(mesh(sphereGeo(0.08, 10, 8), toon(COLORS.candyYellow), 0, 0.08, 0));
-      g.position.x = 0.12;
       break;
     }
-    case 'propeller': {
-      const cap = mesh(sharedGeo('capDome', () => new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), toon(COLORS.sky), 0, -0.08, 0);
-      const stem = mesh(sharedGeo('propStem', () => new THREE.CylinderGeometry(0.025, 0.025, 0.14, 8)), toon(COLORS.ink), 0, 0.27, 0);
+    case 'visor': {
+      // A curved see-through holo visor across the front of the helmet.
+      const vis = mesh(sharedGeo('holoVisor', () => new THREE.CylinderGeometry(0.31, 0.31, 0.12, 20, 1, true, -1.1, 2.2)),
+        toon(0x7ff3ff, { emissive: 0x1f6f80, transparent: true, opacity: 0.75 }), 0, -0.12, 0);
+      vis.rotation.y = Math.PI;
+      const strap = mesh(sharedGeo('holoStrap', () => new THREE.TorusGeometry(0.3, 0.025, 6, 20)), toon(0x9aa3b8), 0, -0.12, 0);
+      strap.rotation.x = Math.PI / 2;
+      g.add(vis, strap);
+      break;
+    }
+    case 'radar': {
+      // A small spinning radar dish on a mast.
+      const mast = mesh(sharedGeo('radarMast', () => new THREE.CylinderGeometry(0.03, 0.04, 0.22, 8).translate(0, 0.11, 0)), toon(0x9aa3b8));
       prop = new THREE.Group();
-      prop.position.y = 0.34;
-      for (const s of [-1, 1]) prop.add(mesh(sharedGeo('propBlade', () => new THREE.BoxGeometry(0.26, 0.02, 0.08)), toon(s > 0 ? COLORS.candyYellow : COLORS.coral), s * 0.13, 0, 0));
-      g.add(cap, stem, prop);
+      prop.position.y = 0.24;
+      const dish = mesh(sharedGeo('radarDish', () => new THREE.SphereGeometry(0.17, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2.6)), toon(COLORS.white));
+      dish.rotation.x = -1.1;
+      const tip = mesh(sphereGeo(0.035, 8, 6), glow(COLORS.coral, 0x661020), 0, 0.06, 0.1);
+      prop.add(dish, tip);
+      g.add(mast, prop);
       break;
     }
-    case 'hardhat': {
-      const dome = mesh(sharedGeo('hardDome', () => new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), toon(COLORS.gold), 0, -0.05, 0);
-      const brim = mesh(sharedGeo('hardBrim', () => new THREE.CylinderGeometry(0.38, 0.38, 0.04, 20)), toon(COLORS.gold), 0, -0.04, 0.04);
-      const ridge = mesh(sharedGeo('hardRidge', () => new THREE.BoxGeometry(0.06, 0.06, 0.5)), toon(COLORS.tangerine), 0, 0.22, 0);
-      g.add(dome, brim, ridge);
+    case 'welder': {
+      // Bolt's welding visor: a helmet band with a dark flip-up face plate.
+      const dome = mesh(sharedGeo('weldDome', () => new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2)), toon(COLORS.tangerine), 0, -0.06, 0);
+      const plate = mesh(sharedGeo('weldPlate', () => new THREE.BoxGeometry(0.42, 0.22, 0.05)), toon(0x34304a), 0, 0.18, 0.2);
+      plate.rotation.x = -0.9;
+      const lens = mesh(sharedGeo('weldLens', () => new THREE.BoxGeometry(0.26, 0.07, 0.02)), glow(0x3ddc97, 0x0c4a30), 0, 0.2, 0.23);
+      lens.rotation.x = -0.9;
+      g.add(dome, plate, lens);
       break;
     }
-    case 'crown': {
-      const gold = toon(COLORS.gold, { emissive: 0x403000 });
-      g.add(mesh(sharedGeo('crownBand', () => new THREE.CylinderGeometry(0.22, 0.2, 0.14, 16, 1, true)), gold, 0, 0.05, 0));
-      for (let i = 0; i < 5; i++) {
-        const a = (i / 5) * Math.PI * 2;
-        g.add(mesh(sharedGeo('crownSpike', () => new THREE.ConeGeometry(0.06, 0.16, 6).translate(0, 0.08, 0)), gold, Math.cos(a) * 0.2, 0.11, Math.sin(a) * 0.2));
-      }
-      g.add(mesh(sphereGeo(0.05, 8, 6), toon(COLORS.coral, { emissive: 0x661020 }), 0, 0.08, 0.21));
-      (g.children[0] as THREE.Mesh).material = gold;
-      ((g.children[0] as THREE.Mesh).material as THREE.Material).side = THREE.DoubleSide;
+    case 'halo': {
+      // A glowing orbit ring floating above the helmet, with two tiny moons.
+      const ringMat = toon(COLORS.gold, { emissive: 0x6a5000 });
+      const ring = mesh(sharedGeo('orbitRing', () => new THREE.TorusGeometry(0.24, 0.03, 8, 28)), ringMat, 0, 0.22, 0);
+      ring.rotation.x = Math.PI / 2 - 0.25;
+      prop = new THREE.Group();
+      prop.position.y = 0.22;
+      for (const a of [0, Math.PI]) prop.add(mesh(sphereGeo(0.05, 8, 6), glow(0x8fe0ff, 0x1f5a80), Math.cos(a) * 0.24, 0, Math.sin(a) * 0.24));
+      g.add(ring, prop);
       break;
     }
     default:
