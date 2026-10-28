@@ -1818,6 +1818,7 @@ export class Game {
         accepted: this.state.npc.pip.acc,
         ready: questReady(this.state),
         bolt: { ...this.state.npc.bolt, ready: questReady(this.state, 'bolt') },
+        py: this.player.pos.y,
         air: Math.round(this.air * 100) / 100,
         storm: this.surface?.storm ? { phase: this.surface.storm.phase, amount: Math.round(this.surface.storm.amount * 100) / 100, sheltered: this.surface.sheltered(this.player.pos), fogFar: Math.round((this.surface.scene.fog as THREE.Fog).far) } : null,
         upgrades: [...this.state.upgrades],

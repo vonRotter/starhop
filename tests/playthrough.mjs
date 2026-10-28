@@ -45,12 +45,19 @@ async function hold(key, ms) {
   await page.waitForTimeout(ms);
   await page.keyboard.up(key);
 }
+/** Holds a key until the condition is true (slow software rendering needs longer). */
+async function holdUntil(key, cond, max = 6000) {
+  await page.keyboard.down(key);
+  const t0 = Date.now();
+  while (Date.now() - t0 < max && !(await cond())) await page.waitForTimeout(100);
+  await page.keyboard.up(key);
+}
 async function scan(species) {
   for (let tries = 0; tries < 4; tries++) {
     if ((await info()).finds.includes(species)) return;
     if (!(await sh('goNear', species))) throw new Error(`no ${species} here`);
     await page.waitForTimeout(150);
-    await hold('KeyF', 1500);
+    await holdUntil('KeyF', async () => (await info()).finds.includes(species), 4000);
   }
   const i = await info();
   if (!i.finds.includes(species)) throw new Error(`could not scan ${species}`);
@@ -61,11 +68,17 @@ async function gather(kind, n) {
     const before = (await info()).inv[kind];
     if (!(await sh('goNear', kind))) throw new Error(`no ${kind} here`);
     await page.waitForTimeout(100);
-    await hold('KeyE', 1200);
+    await holdUntil('KeyE', async () => (await info()).inv[kind] > before);
     const after = (await info()).inv[kind];
     if (after <= before) throw new Error(`gathering ${kind} failed at ${(await info()).pos} (prompt: ${await page.textContent('#prompt')})`);
   }
 }
+const NODES = { pebble: 5, bloom: 11, frost: 11, dune: 10 };
+async function checkNodes(p) {
+  const n = (await info()).nodes;
+  if (n !== NODES[p]) throw new Error(`${p} has ${n} resource nodes, NODE_COUNT says ${NODES[p]}`);
+}
+const fps = () => page.evaluate(() => new Promise((res) => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < 1500) requestAnimationFrame(f); else res(Math.round(n / ((performance.now() - t0) / 1000))); }; requestAnimationFrame(f); }));
 async function talkAndClick() {
   await sh('goNear', 'pip');
   await page.waitForTimeout(150);
@@ -83,6 +96,7 @@ try {
   await page.waitForTimeout(1500);
   if (!(await page.$('a[href]'))) throw new Error('no back button');
   await snap('title');
+  console.log('  fps on the title', await fps());
   await page.click('#t-new');
   await waitFor((i) => i.mode === 'foot' && i.where === 'pebble', 'start on Pebble');
   await sh('setSpeed', 3);
@@ -206,15 +220,17 @@ try {
     await page.keyboard.press('KeyZ');
     await waitFor((i) => i.where === 'frost' && i.mode === 'foot', 'land on Frost', 400000);
     await snap('frost-landed');
+    console.log('  fps on Frost', await fps());
     await gather('ice', 3);
     for (let k = 0; k < 2; k++) {
+      await sh('setAir', 1);
       const pil = await sh('pillar');
       await page.waitForTimeout(200);
       await page.keyboard.down('KeyW');
       await page.keyboard.down('Space');
-      await page.waitForTimeout(2500);
+      for (let w = 0; w < 40 && (await info()).py < pil.top - 0.3; w++) await page.waitForTimeout(100);
       await page.keyboard.up('Space');
-      await page.waitForTimeout(600);
+      await page.waitForTimeout(150);
       await page.keyboard.up('KeyW');
       await page.waitForTimeout(400);
       const i2 = await info();
@@ -223,7 +239,7 @@ try {
       if (i2.pos[1] < pil.top - 1) throw new Error('jetpack did not reach the pillar top');
       const before = i2.inv.ice;
       await sh('goNear', 'ice', true);
-      await hold('KeyE', 1200);
+      await holdUntil('KeyE', async () => (await info()).inv.ice > before);
       if ((await info()).inv.ice <= before) throw new Error('could not collect ice on the pillar');
     }
     await waitFor((i) => i.ready, 'quest 2 ready', 5000);
@@ -329,6 +345,8 @@ try {
     step('Bolt on Bloom: fix the ship (crystals and star fruit)');
     await sh('visit', 'bloom');
     await waitFor((i) => i.where === 'bloom' && i.mode === 'foot', 'on Bloom');
+
+    await checkNodes('bloom');
     if ((await info()).nodes !== 11) throw new Error('Bloom node count changed (NODE_COUNT)');
     await talkTo('bolt');
     i = await info();
@@ -345,6 +363,8 @@ try {
     step('workbench on Pebble: boost upgrade, paint, hat');
     await sh('visit', 'pebble');
     await waitFor((i) => i.where === 'pebble' && i.mode === 'foot', 'on Pebble');
+
+    await checkNodes('pebble');
     await sh('give', 'crystal', 5);
     await sh('give', 'ice', 4);
     await sh('give', 'fruit', 2);
@@ -370,6 +390,8 @@ try {
     step('Frost: geyser sensors, slippery ice, running out of air');
     await sh('visit', 'frost');
     await waitFor((i) => i.where === 'frost' && i.mode === 'foot', 'on Frost');
+
+    await checkNodes('frost');
     await page.waitForTimeout(400);
     if (!(await page.isVisible('#air.on'))) throw new Error('no air meter on Frost');
     for (let k = 0; k < 3; k++) {
@@ -419,6 +441,8 @@ try {
     if (!i.bolt.ready) throw new Error(`sensors quest should be ready: ${JSON.stringify(i)}`);
     await sh('visit', 'bloom');
     await waitFor((i) => i.where === 'bloom' && i.mode === 'foot', 'on Bloom');
+
+    await checkNodes('bloom');
     await talkTo('bolt');
     await page.waitForSelector('#dialog.visible', { timeout: 5000 });
     await page.click('#dlg-buttons button.primary');
@@ -449,6 +473,8 @@ try {
     if (!i.bolt.ready) throw new Error(`race should win a medal (<= 75 s): ${i.raceBest}`);
     await sh('visit', 'bloom');
     await waitFor((i) => i.where === 'bloom' && i.mode === 'foot', 'on Bloom');
+
+    await checkNodes('bloom');
     await talkTo('bolt');
     await page.waitForSelector('#dialog.visible', { timeout: 5000 });
     const blocked = await page.textContent('#dlg-text');
@@ -463,6 +489,8 @@ try {
     if (!(await info()).bolt.acc) throw new Error('Bolt quest 4 not accepted');
     await sh('visit', 'dune');
     await waitFor((i) => i.where === 'dune' && i.mode === 'foot', 'on Dune');
+
+    await checkNodes('dune');
     for (let k = 0; k < 3; k++) {
       await sh('setAir', 1);
       if (!(await sh('goNear', 'gear'))) throw new Error(`gear ${k + 1} missing`);
@@ -493,6 +521,8 @@ try {
     if (i.gears.length !== 3 || !i.bolt.ready) throw new Error(`gears not found: ${JSON.stringify(i)}`);
     await sh('visit', 'bloom');
     await waitFor((i) => i.where === 'bloom' && i.mode === 'foot', 'on Bloom');
+
+    await checkNodes('bloom');
     await talkTo('bolt');
     i = await info();
     if (i.bolt.i !== 4 || !i.upgrades.includes('superjet')) throw new Error(`Bolt quest 4 not done: ${JSON.stringify(i)}`);
@@ -501,6 +531,8 @@ try {
     await sh('set', 'npc', { pip: { i: 3, acc: false }, bolt: { i: 4, acc: false } });
     await sh('visit', 'pebble');
     await waitFor((i) => i.where === 'pebble' && i.mode === 'foot', 'on Pebble');
+
+    await checkNodes('pebble');
     await talkTo('pip');
     await sh('give', 'fruit', 4);
     await sh('give', 'ice', 4);

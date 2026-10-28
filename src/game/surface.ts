@@ -686,8 +686,13 @@ export class Surface {
     }
     // slippery ice patches: glossy discs that follow the ground
     for (let i = 0; i < 9; i++) {
-      const p = i === 0 ? { x: -22, z: 18, y: 0 } : this.spot(rng, 26, 130, 4);
+      // keep clear of pillars and geysers so the jetpack and sensor jobs stay fair
       const r = i === 0 ? 6 : rng.range(4.5, 8);
+      let p = { x: -22, z: 18, y: 0 };
+      for (let k = 0; i > 0 && k < 10; k++) {
+        p = this.spot(rng, 26, 130, r + 3);
+        if (!this.geysers.some((g) => Math.hypot(g.x - p.x, g.z - p.z) < r + 4)) break;
+      }
       // several rings of vertices so the disc bends with the ground
       const ring = new THREE.RingGeometry(0.01, r, 28, 5);
       ring.rotateX(-Math.PI / 2);
